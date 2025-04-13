@@ -1,118 +1,144 @@
 use anyhow::Result;
 use itertools::Itertools;
 use rayon::prelude::*;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use walkdir::WalkDir;
 
-use pasture_core::containers::{BorrowedBuffer, VectorBuffer};
-
 use crate::commands::pointcloud::pointcloud_utils::{
-    compute_bounds, extension, is_supported_extension, read_pointcloud_file_to_buffer,
+    compute_summary, extension, is_supported_extension, read_pointcloud_file_to_buffer,
+    PointcloudSummary,
 };
 use crate::PointcloudSummaryArgs;
 
+/// Aggregated statistics over multiple point cloud files.
 struct Stats {
-    total_points: u64,
-    min_x: f64,
-    max_x: f64,
-    min_y: f64,
-    max_y: f64,
-    min_z: f64,
-    max_z: f64,
-    point_counts: Vec<u64>,
+    total_points: usize,
+    global_min_x: f64,
+    global_max_x: f64,
+    global_min_y: f64,
+    global_max_y: f64,
+    global_min_z: f64,
+    global_max_z: f64,
+    sum_x: f64,
+    sum_y: f64,
+    sum_z: f64,
+    file_point_counts: Vec<usize>,
+    classification_counts: HashMap<u8, usize>,
+    intensity_distribution: BTreeMap<String, usize>,
+    intensity_sum: u64,
+    intensity_count: usize,
 }
 
 impl Stats {
     fn new() -> Self {
         Self {
             total_points: 0,
-            min_x: f64::MAX,
-            max_x: f64::MIN,
-            min_y: f64::MAX,
-            max_y: f64::MIN,
-            min_z: f64::MAX,
-            max_z: f64::MIN,
-            point_counts: Vec::new(),
+            global_min_x: f64::MAX,
+            global_max_x: f64::MIN,
+            global_min_y: f64::MAX,
+            global_max_y: f64::MIN,
+            global_min_z: f64::MAX,
+            global_max_z: f64::MIN,
+            sum_x: 0.0,
+            sum_y: 0.0,
+            sum_z: 0.0,
+            file_point_counts: Vec::new(),
+            classification_counts: HashMap::new(),
+            intensity_distribution: BTreeMap::new(),
+            intensity_sum: 0,
+            intensity_count: 0,
         }
     }
 
-    fn update(&mut self, buffer: &VectorBuffer) {
-        let num_points = buffer.len() as u64;
-        self.total_points += num_points;
-        self.point_counts.push(num_points);
+    fn update(&mut self, summary: PointcloudSummary) {
+        self.total_points += summary.total_points;
+        self.global_min_x = self.global_min_x.min(summary.min_x);
+        self.global_max_x = self.global_max_x.max(summary.max_x);
+        self.global_min_y = self.global_min_y.min(summary.min_y);
+        self.global_max_y = self.global_max_y.max(summary.max_y);
+        self.global_min_z = self.global_min_z.min(summary.min_z);
+        self.global_max_z = self.global_max_z.max(summary.max_z);
+        self.sum_x += summary.sum_x;
+        self.sum_y += summary.sum_y;
+        self.sum_z += summary.sum_z;
+        self.file_point_counts.push(summary.total_points);
 
-        let (buf_min_x, buf_max_x, buf_min_y, buf_max_y, buf_min_z, buf_max_z) =
-            compute_bounds(buffer);
+        if let Some(class_counts) = summary.classification_counts {
+            for (class, count) in class_counts {
+                *self.classification_counts.entry(class).or_insert(0) += count;
+            }
+        }
 
-        if buf_min_x < self.min_x {
-            self.min_x = buf_min_x;
-        }
-        if buf_max_x > self.max_x {
-            self.max_x = buf_max_x;
-        }
-        if buf_min_y < self.min_y {
-            self.min_y = buf_min_y;
-        }
-        if buf_max_y > self.max_y {
-            self.max_y = buf_max_y;
-        }
-        if buf_min_z < self.min_z {
-            self.min_z = buf_min_z;
-        }
-        if buf_max_z > self.max_z {
-            self.max_z = buf_max_z;
+        if let Some(intensity) = summary.intensity_stats {
+            for (bin, count) in intensity.distribution {
+                *self.intensity_distribution.entry(bin).or_insert(0) += count;
+            }
+            self.intensity_sum += intensity.sum_intensity;
+            self.intensity_count += intensity.count;
         }
     }
 
     fn merge(&mut self, other: Stats) {
         self.total_points += other.total_points;
-        if other.min_x < self.min_x {
-            self.min_x = other.min_x;
+        self.global_min_x = self.global_min_x.min(other.global_min_x);
+        self.global_max_x = self.global_max_x.max(other.global_max_x);
+        self.global_min_y = self.global_min_y.min(other.global_min_y);
+        self.global_max_y = self.global_max_y.max(other.global_max_y);
+        self.global_min_z = self.global_min_z.min(other.global_min_z);
+        self.global_max_z = self.global_max_z.max(other.global_max_z);
+        self.sum_x += other.sum_x;
+        self.sum_y += other.sum_y;
+        self.sum_z += other.sum_z;
+        self.file_point_counts.extend(other.file_point_counts);
+        for (class, count) in other.classification_counts {
+            *self.classification_counts.entry(class).or_insert(0) += count;
         }
-        if other.max_x > self.max_x {
-            self.max_x = other.max_x;
+        for (bin, count) in other.intensity_distribution {
+            *self.intensity_distribution.entry(bin).or_insert(0) += count;
         }
-        if other.min_y < self.min_y {
-            self.min_y = other.min_y;
-        }
-        if other.max_y > self.max_y {
-            self.max_y = other.max_y;
-        }
-        if other.min_z < self.min_z {
-            self.min_z = other.min_z;
-        }
-        if other.max_z > self.max_z {
-            self.max_z = other.max_z;
-        }
-        self.point_counts.extend(other.point_counts);
+        self.intensity_sum += other.intensity_sum;
+        self.intensity_count += other.intensity_count;
     }
 
-    fn calculate_mean(&self) -> f64 {
-        if self.point_counts.is_empty() {
+    fn calculate_mean_file_points(&self) -> f64 {
+        if self.file_point_counts.is_empty() {
             0.0
         } else {
-            self.total_points as f64 / self.point_counts.len() as f64
+            self.total_points as f64 / self.file_point_counts.len() as f64
         }
     }
 
-    fn calculate_median(&mut self) -> f64 {
-        if self.point_counts.is_empty() {
+    fn calculate_median_file_points(&mut self) -> f64 {
+        if self.file_point_counts.is_empty() {
             0.0
         } else {
-            self.point_counts.sort_unstable();
-            let mid = self.point_counts.len() / 2;
-            if self.point_counts.len() % 2 == 0 {
-                (self.point_counts[mid - 1] + self.point_counts[mid]) as f64 / 2.0
+            self.file_point_counts.sort_unstable();
+            let mid = self.file_point_counts.len() / 2;
+            if self.file_point_counts.len() % 2 == 0 {
+                (self.file_point_counts[mid - 1] + self.file_point_counts[mid]) as f64 / 2.0
             } else {
-                self.point_counts[mid] as f64
+                self.file_point_counts[mid] as f64
             }
+        }
+    }
+
+    fn overall_mean_position(&self) -> (f64, f64, f64) {
+        if self.total_points == 0 {
+            (0.0, 0.0, 0.0)
+        } else {
+            (
+                self.sum_x / self.total_points as f64,
+                self.sum_y / self.total_points as f64,
+                self.sum_z / self.total_points as f64,
+            )
         }
     }
 }
 
 pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
-    // gather pointcloud filepaths based on args
+    // Gather pointcloud filepaths based on args.
     let paths = gather_pointcloud_paths(&args.input, args.recursive)?;
     let unique_extensions: Vec<_> = paths
         .iter()
@@ -126,28 +152,36 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
     }
     let count_files_total = paths.len();
 
-    let read_files = paths
+    // For each file, read the buffer and compute its summary.
+    let summaries: Vec<PointcloudSummary> = paths
         .par_iter()
         .filter_map(|path| {
-            // If reading the file fails, return None (skip it),
-            // otherwise return Some(buffer).
-            match read_pointcloud_file_to_buffer(path, args.strict_pcd_schema) {
-                Ok(buffer) => Some(buffer),
+            match read_pointcloud_file_to_buffer(path, args.factor, args.pcd_dyn_fields.clone()) {
+                Ok(buffer) => match compute_summary(&buffer) {
+                    Ok(summary) => Some(summary),
+                    Err(err) => {
+                        eprintln!(
+                            "Skipping file {} due to error in summarization: {}",
+                            path, err
+                        );
+                        None
+                    }
+                },
                 Err(err) => {
-                    eprintln!("Skipping file {} due to error: {}", path, err);
+                    eprintln!("Skipping file {} due to error in reading: {}", path, err);
                     None
                 }
             }
         })
-        .collect::<Vec<VectorBuffer>>();
-    let count_read_succesfully = read_files.len();
-    // Now fold over buffers that made it (skipping None).
-    let mut final_stats = read_files
+        .collect();
+
+    let count_read_successfully = summaries.len();
+    let mut final_stats = summaries
         .into_par_iter()
         .fold(
             || Stats::new(),
-            |mut acc, buffer| {
-                acc.update(&buffer);
+            |mut acc, summary| {
+                acc.update(summary);
                 acc
             },
         )
@@ -158,32 +192,85 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
                 a
             },
         );
+
     println!("Total number of files: {}", count_files_total);
     println!(
-        "Failed to read: {} files",
-        count_files_total - count_read_succesfully
+        "Failed to read or summarize: {} files",
+        count_files_total - count_read_successfully
     );
     println!("Unique filetypes: {}", unique_extensions.join(", "));
     println!("Total number of points: {}", final_stats.total_points);
+    println!("Overall bounding box:");
+    println!(
+        "  X: [{}, {}]",
+        final_stats.global_min_x, final_stats.global_max_x
+    );
+    println!(
+        "  Y: [{}, {}]",
+        final_stats.global_min_y, final_stats.global_max_y
+    );
+    println!(
+        "  Z: [{}, {}]",
+        final_stats.global_min_z, final_stats.global_max_z
+    );
+
+    let (mean_x, mean_y, mean_z) = final_stats.overall_mean_position();
+    println!(
+        "Overall mean position: x: {:.3}, y: {:.3}, z: {:.3}",
+        mean_x, mean_y, mean_z
+    );
+
+    // Compute volume for density.
+    let volume = (final_stats.global_max_x - final_stats.global_min_x)
+        * (final_stats.global_max_y - final_stats.global_min_y)
+        * (final_stats.global_max_z - final_stats.global_min_z);
+    let overall_density = if volume > 0.0 {
+        final_stats.total_points as f64 / volume
+    } else {
+        0.0
+    };
+    println!("Overall density (points per m^3): {:.3}", overall_density);
+
+    // File points statistics.
     println!(
         "Mean number of points per file: {:.2}",
-        final_stats.calculate_mean()
+        final_stats.calculate_mean_file_points()
     );
     println!(
         "Median number of points per file: {:.2}",
-        final_stats.calculate_median()
+        final_stats.calculate_median_file_points()
     );
-    if final_stats.total_points > 0 {
-        println!("Bounding box:");
-        println!("  X: [{}, {}]", final_stats.min_x, final_stats.max_x);
-        println!("  Y: [{}, {}]", final_stats.min_y, final_stats.max_y);
-        println!("  Z: [{}, {}]", final_stats.min_z, final_stats.max_z);
+
+    // Classification distribution.
+    if !final_stats.classification_counts.is_empty() {
+        println!("Overall classification distribution:");
+        let items: Vec<_> = final_stats
+            .classification_counts
+            .into_iter()
+            .sorted_by_key(|x| x.0)
+            .collect();
+        for (class, count) in items.iter() {
+            let percentage = (*count as f64 / final_stats.total_points as f64) * 100.0;
+            println!("  Class {}: {} points ({:.3}%)", class, count, percentage);
+        }
+    }
+
+    // Intensity statistics.
+    if final_stats.intensity_count > 0 {
+        let overall_mean_intensity =
+            final_stats.intensity_sum as f64 / final_stats.intensity_count as f64;
+        println!("Overall intensity mean: {:.3}", overall_mean_intensity);
+        println!("Overall intensity distribution:");
+        for (bin, count) in final_stats.intensity_distribution.iter() {
+            let percentage = (*count as f64 / final_stats.intensity_count as f64) * 100.0;
+            println!("  {}: {} points ({:.2}%)", bin, count, percentage);
+        }
     }
 
     Ok(())
 }
 
-/// Gather pointcloud paths (.las/.laz/.pcd)
+/// Gather pointcloud paths (.las/.laz/.pcd).
 fn gather_pointcloud_paths(input: &str, recursive: bool) -> Result<Vec<String>> {
     let mut paths = Vec::new();
 

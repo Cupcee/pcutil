@@ -2,6 +2,12 @@ use clap::Args;
 
 pub mod commands;
 
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum DynFieldType {
+    Classification,
+    Intensity,
+}
+
 #[derive(Debug, Args)]
 pub struct PointcloudSummaryArgs {
     /// Input file or directory
@@ -10,14 +16,15 @@ pub struct PointcloudSummaryArgs {
     #[arg(required = true)]
     pub input: String,
 
+    #[clap(long, value_enum, num_args = 0..)]
+    pub pcd_dyn_fields: Vec<DynFieldType>,
+
+    #[clap(short, long, default_value = "1.0")]
+    pub factor: f64,
+
     /// If provided, recursively process directories
     #[clap(short, long)]
     pub recursive: bool,
-
-    /// Use strict schema for PCD files. If provided, the schema is expected to be precisely x, y, z,
-    /// rgb where all are F32. Otherwise, we only try dynamically parsing xyz information.
-    #[clap(long)]
-    pub strict_pcd_schema: bool,
 }
 
 #[derive(Debug, Args)]
@@ -33,10 +40,11 @@ pub struct PointcloudConvertArgs {
     #[arg(required = true)]
     pub output: String,
 
-    /// Strict PCD schema. If provided, the schema is expected to be precisely x, y, z,
-    /// rgb where all are F32. Otherwise, we only try dynamically parsing xyz information.
-    #[clap(long)]
-    pub strict_pcd_schema: bool,
+    #[clap(short, long, default_value = "1.0")]
+    pub factor: f64,
+
+    #[clap(long, value_enum, num_args = 0..)]
+    pub pcd_dyn_fields: Vec<DynFieldType>,
 }
 
 // Error handling utility that can be used by both lib and binary
