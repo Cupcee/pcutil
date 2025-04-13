@@ -1,0 +1,26 @@
+[package]
+name = "pcutil"
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/cupcee/pcutil"
+rust-version = "1.81"
+authors = ["Samuel Piirainen <samuel.piirainen@gmail.com>"]
+description = ""
+license = "MIT"
+
+[dependencies]
+anyhow = "1.0.91"
+clap = { version = "4.4.7", features = ["derive"] }
+rayon = "1.10.0"
+walkdir = "2.4.0"
+pasture-io = "0.5.0"
+pasture-core = "0.5.0"
+pcd-rs = { version = "0.12.0", features = ["derive"] }
+bytemuck = "1.20.0"
+itertools = "0.13.0"
+
+[dev-dependencies]
+uuid = { version = "1.0", features = ["v4"] }
+
+[profile.release]
+lto = true

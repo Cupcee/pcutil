@@ -1,0 +1,7 @@
+/target
+test-data
+test-data-*/
+images/
+videos/
+pointclouds/
+resized_*/
