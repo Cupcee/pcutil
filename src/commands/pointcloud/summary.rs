@@ -1,8 +1,9 @@
 use anyhow::Result;
+use histo::Histogram;
 use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
 use rayon::prelude::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::Path;
 
 use walkdir::WalkDir;
@@ -28,9 +29,6 @@ struct Stats {
     sum_z: f64,
     file_point_counts: Vec<usize>,
     classification_counts: HashMap<u8, usize>,
-    intensity_distribution: BTreeMap<String, usize>,
-    intensity_sum: u64,
-    intensity_count: usize,
     density_sum: f64,
     hull_volume_sum: f64,
     hull_area_sum: f64,
@@ -55,9 +53,6 @@ impl Stats {
             sum_z: 0.0,
             file_point_counts: Vec::new(),
             classification_counts: HashMap::new(),
-            intensity_distribution: BTreeMap::new(),
-            intensity_sum: 0,
-            intensity_count: 0,
             density_sum: 0.0,
             hull_volume_sum: 0.0,
             hull_area_sum: 0.0,
@@ -87,13 +82,6 @@ impl Stats {
             }
         }
 
-        if let Some(intensity) = summary.intensity_stats {
-            for (bin, count) in intensity.distribution {
-                *self.intensity_distribution.entry(bin).or_insert(0) += count;
-            }
-            self.intensity_sum += intensity.sum_intensity;
-            self.intensity_count += intensity.count;
-        }
         self.density_sum += summary.density;
         self.hull_volume_sum += summary.convex_hull_volume;
         self.hull_area_sum += summary.convex_hull_area;
@@ -117,14 +105,10 @@ impl Stats {
         self.sum_y += other.sum_y;
         self.sum_z += other.sum_z;
         self.file_point_counts.extend(other.file_point_counts);
+
         for (class, count) in other.classification_counts {
             *self.classification_counts.entry(class).or_insert(0) += count;
         }
-        for (bin, count) in other.intensity_distribution {
-            *self.intensity_distribution.entry(bin).or_insert(0) += count;
-        }
-        self.intensity_sum += other.intensity_sum;
-        self.intensity_count += other.intensity_count;
         self.density_sum += other.density_sum;
         self.hull_volume_sum += other.hull_volume_sum;
         self.hull_area_sum += other.hull_area_sum;
@@ -136,26 +120,15 @@ impl Stats {
         self.file_count += other.file_count;
     }
 
-    fn calculate_mean_file_points(&self) -> f64 {
-        if self.file_point_counts.is_empty() {
-            0.0
-        } else {
-            self.total_points as f64 / self.file_point_counts.len() as f64
-        }
-    }
-
-    fn calculate_median_file_points(&mut self) -> f64 {
-        if self.file_point_counts.is_empty() {
-            0.0
-        } else {
-            self.file_point_counts.sort_unstable();
-            let mid = self.file_point_counts.len() / 2;
-            if self.file_point_counts.len() % 2 == 0 {
-                (self.file_point_counts[mid - 1] + self.file_point_counts[mid]) as f64 / 2.0
-            } else {
-                self.file_point_counts[mid] as f64
+    fn calculate_point_count_histogram(&self) -> Option<Histogram> {
+        if self.file_point_counts.len() > 1 {
+            let mut histogram = Histogram::with_buckets(10);
+            for sample in self.file_point_counts.iter() {
+                histogram.add(*sample as u64);
             }
+            return Some(histogram);
         }
+        None
     }
 
     fn overall_mean_position(&self) -> (f64, f64, f64) {
@@ -212,7 +185,7 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
         .collect();
 
     let count_read_successfully = summaries.len();
-    let mut final_stats = summaries
+    let final_stats = summaries
         .into_par_iter()
         .fold(
             || Stats::new(),
@@ -229,47 +202,55 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
             },
         );
 
-    println!("----------------------------------");
-    println!("Dataset details");
-    println!("----------------------------------");
-    println!("Total number of files: {}", count_files_total);
-    println!(
-        "Failed to read or summarize: {} files",
-        count_files_total - count_read_successfully
-    );
-    println!("Unique filetypes: {}\n", unique_extensions.join(", "));
+    let is_multiple_files = paths.len() > 1;
 
-    println!("----------------------------------");
-    println!("Dataset Statistics");
-    println!("----------------------------------");
+    if is_multiple_files {
+        println!("Summary for files in {}", &args.input);
+        println!("Directory dataset details");
+        println!("Total number of files: {}", count_files_total);
+        println!(
+            "Failed to read or summarize: {} files",
+            count_files_total - count_read_successfully
+        );
+        println!("Unique filetypes: {}", unique_extensions.join(", "));
+    } else {
+        println!("Summary for file {}", &args.input.as_str());
+    }
+
+    let aggregate_method = if is_multiple_files { "Mean " } else { "" };
     println!("Total number of points: {}", final_stats.total_points);
-    println!("Axis-aligned bbox:");
+    if let Some(hist) = final_stats.calculate_point_count_histogram() {
+        println!("=== Histogram ===");
+        println!("{}", hist);
+    }
+
+    println!("Axis‑aligned bounding‑box:");
     println!(
-        "  x: [{:.3}, {:.3}]",
+        " - x: [{:.3}, {:.3}]",
         final_stats.global_min_x, final_stats.global_max_x
     );
     println!(
-        "  y: [{:.3}, {:.3}]",
+        " - y: [{:.3}, {:.3}]",
         final_stats.global_min_y, final_stats.global_max_y
     );
     println!(
-        "  z: [{:.3}, {:.3}]",
+        " - z: [{:.3}, {:.3}]",
         final_stats.global_min_z, final_stats.global_max_z
     );
+
     println!(
-        "Mean Bounding‑box volume: {:.3} m³",
+        "{}bounding‑box volume: {:.3} m³",
+        aggregate_method,
         final_stats.bbox_volume_sum / final_stats.file_count as f64
     );
     println!(
-        "Mean convex‑hull volume: {:.3} m³",
+        "{}convex‑hull volume: {:.3} m³",
+        aggregate_method,
         final_stats.hull_volume_sum / final_stats.file_count as f64
     );
     println!(
-        "Mean hull surface area: {:.3} m²",
-        final_stats.hull_area_sum / final_stats.file_count as f64
-    );
-    println!(
-        "Mean bbox utilisation by hull: {:.2} %",
+        "{}Bbox utilization by convex-hull: {:.2}%",
+        aggregate_method,
         100.0 * final_stats.utilisation_sum / final_stats.file_count as f64
     );
 
@@ -278,59 +259,44 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
         .iter()
         .map(|v| v / final_stats.file_count as f64)
         .collect();
+    // normalize by min value for easier reading
+    let min_eig = mean_eigs.iter().copied().reduce(f64::min).unwrap_or(0.0);
     println!(
-        "Mean PCA eigenvalues (λ₁, λ₂, λ₃): [{:.3}, {:.3}, {:.3}]",
-        mean_eigs[0], mean_eigs[1], mean_eigs[2]
+        "{}PCA eigenvalues (λ₁:λ₂:λ₃): [{:.3}:{:.3}:{:.3}]",
+        aggregate_method,
+        mean_eigs[0] / min_eig,
+        mean_eigs[1] / min_eig,
+        mean_eigs[2] / min_eig
     );
     println!(
-        "If λ₃ ≪ λ₂, the cloud is effectively planar; if λ₂ ≪ λ₁ as well, it is almost linear."
+        " - 100:10:1: Urban mobile strip. Street very long; cross-street details moderate; vertical noise small.",
     );
+    println!(" - 100:1:0.1: Building facede. Flat wall, little depth");
+    println!(" - 10:10:5: MLS Tree row. Trees fill space in all but vertical direction.",);
+    println!(" - 1:1:1: Manufactured part. Symmetric object; scale set by its bbox coordinates.\n",);
 
-    // Density statistics.
-    if final_stats.file_count > 0 {
-        let overall_mean_density = final_stats.density_sum / final_stats.file_count as f64;
-        println!(
-            "Mean density (Voxel method): {:.3} points / m³",
-            overall_mean_density
-        );
-    }
+    let overall_mean_density = final_stats.density_sum / final_stats.file_count as f64;
+    println!(
+        "{}Density (Voxel method): {:.3} points / m³",
+        aggregate_method, overall_mean_density
+    );
 
     let (x, y, z) = final_stats.overall_mean_position();
-    println!("Mean origo: [x: {:.3}, y: {:.3}, z: {:.3}]", x, y, z);
-
-    // File points statistics.
     println!(
-        "Mean points: {:.3}",
-        final_stats.calculate_mean_file_points()
-    );
-    println!(
-        "Median points: {:.3}",
-        final_stats.calculate_median_file_points()
+        "{}Origo: [x: {:.3}, y: {:.3}, z: {:.3}]\n",
+        aggregate_method, x, y, z
     );
 
-    // Classification distribution.
+    // --- optional blocks ---------------------------------------------------
     if !final_stats.classification_counts.is_empty() {
-        println!("Class distribution:");
-        let items: Vec<_> = final_stats
+        println!("Class distribution");
+        for (class, count) in final_stats
             .classification_counts
-            .into_iter()
+            .iter()
             .sorted_by_key(|x| x.0)
-            .collect();
-        for (class, count) in items.iter() {
-            let percentage = (*count as f64 / final_stats.total_points as f64) * 100.0;
-            println!("  Class {}: {} points ({:.2} %)", class, count, percentage);
-        }
-    }
-
-    // Intensity statistics.
-    if final_stats.intensity_count > 0 {
-        let overall_mean_intensity =
-            final_stats.intensity_sum as f64 / final_stats.intensity_count as f64;
-        println!("Mean intensity: {:.3}", overall_mean_intensity);
-        println!("Intensity distribution:");
-        for (bin, count) in final_stats.intensity_distribution.iter() {
-            let percentage = (*count as f64 / final_stats.intensity_count as f64) * 100.0;
-            println!("  {}: {} points ({:.3}%)", bin, count, percentage);
+        {
+            let pct = (*count as f64 / final_stats.total_points as f64) * 100.0;
+            println!(" - Class {}: {} points ({:.2} %)", class, count, pct);
         }
     }
 

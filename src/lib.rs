@@ -6,7 +6,6 @@ pub mod shared;
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum DynFieldType {
     Classification,
-    Intensity,
 }
 
 #[derive(Debug, Args)]
