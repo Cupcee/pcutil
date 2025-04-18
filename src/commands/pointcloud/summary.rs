@@ -1,4 +1,5 @@
 use anyhow::Result;
+use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::collections::{BTreeMap, HashMap};
@@ -10,6 +11,7 @@ use crate::commands::pointcloud::pointcloud_utils::{
     compute_summary, extension, is_supported_extension, read_pointcloud_file_to_buffer,
     PointcloudSummary,
 };
+use crate::shared::progressbar::get_progress_bar;
 use crate::PointcloudSummaryArgs;
 
 /// Aggregated statistics over multiple point cloud files.
@@ -29,6 +31,13 @@ struct Stats {
     intensity_distribution: BTreeMap<String, usize>,
     intensity_sum: u64,
     intensity_count: usize,
+    density_sum: f64,
+    hull_volume_sum: f64,
+    hull_area_sum: f64,
+    bbox_volume_sum: f64,
+    utilisation_sum: f64,
+    pca_eigen_sum: Vec<f64>,
+    file_count: usize,
 }
 
 impl Stats {
@@ -49,6 +58,13 @@ impl Stats {
             intensity_distribution: BTreeMap::new(),
             intensity_sum: 0,
             intensity_count: 0,
+            density_sum: 0.0,
+            hull_volume_sum: 0.0,
+            hull_area_sum: 0.0,
+            bbox_volume_sum: 0.0,
+            utilisation_sum: 0.0,
+            pca_eigen_sum: vec![0_f64; 3],
+            file_count: 0,
         }
     }
 
@@ -78,6 +94,15 @@ impl Stats {
             self.intensity_sum += intensity.sum_intensity;
             self.intensity_count += intensity.count;
         }
+        self.density_sum += summary.density;
+        self.hull_volume_sum += summary.convex_hull_volume;
+        self.hull_area_sum += summary.convex_hull_area;
+        self.bbox_volume_sum += summary.bbox_volume;
+        self.utilisation_sum += summary.bbox_utilisation;
+        for i in 0..3 {
+            self.pca_eigen_sum[i] += summary.pca_eigenvalues[i];
+        }
+        self.file_count += 1;
     }
 
     fn merge(&mut self, other: Stats) {
@@ -100,6 +125,15 @@ impl Stats {
         }
         self.intensity_sum += other.intensity_sum;
         self.intensity_count += other.intensity_count;
+        self.density_sum += other.density_sum;
+        self.hull_volume_sum += other.hull_volume_sum;
+        self.hull_area_sum += other.hull_area_sum;
+        self.bbox_volume_sum += other.bbox_volume_sum;
+        self.utilisation_sum += other.utilisation_sum;
+        for i in 0..3 {
+            self.pca_eigen_sum[i] += other.pca_eigen_sum[i];
+        }
+        self.file_count += other.file_count;
     }
 
     fn calculate_mean_file_points(&self) -> f64 {
@@ -155,6 +189,8 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
     // For each file, read the buffer and compute its summary.
     let summaries: Vec<PointcloudSummary> = paths
         .par_iter()
+        .progress()
+        .with_style(get_progress_bar("Computing per-file stats"))
         .filter_map(|path| {
             match read_pointcloud_file_to_buffer(path, args.factor, args.pcd_dyn_fields.clone()) {
                 Ok(buffer) => match compute_summary(&buffer) {
@@ -193,57 +229,88 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
             },
         );
 
+    println!("----------------------------------");
+    println!("Dataset details");
+    println!("----------------------------------");
     println!("Total number of files: {}", count_files_total);
     println!(
         "Failed to read or summarize: {} files",
         count_files_total - count_read_successfully
     );
-    println!("Unique filetypes: {}", unique_extensions.join(", "));
+    println!("Unique filetypes: {}\n", unique_extensions.join(", "));
+
+    println!("----------------------------------");
+    println!("Dataset Statistics");
+    println!("----------------------------------");
     println!("Total number of points: {}", final_stats.total_points);
-    println!("Overall bounding box:");
+    println!("Axis-aligned bbox:");
     println!(
-        "  X: [{}, {}]",
+        "  x: [{:.3}, {:.3}]",
         final_stats.global_min_x, final_stats.global_max_x
     );
     println!(
-        "  Y: [{}, {}]",
+        "  y: [{:.3}, {:.3}]",
         final_stats.global_min_y, final_stats.global_max_y
     );
     println!(
-        "  Z: [{}, {}]",
+        "  z: [{:.3}, {:.3}]",
         final_stats.global_min_z, final_stats.global_max_z
     );
-
-    let (mean_x, mean_y, mean_z) = final_stats.overall_mean_position();
     println!(
-        "Overall mean position: x: {:.3}, y: {:.3}, z: {:.3}",
-        mean_x, mean_y, mean_z
+        "Mean Bounding‑box volume: {:.3} m³",
+        final_stats.bbox_volume_sum / final_stats.file_count as f64
+    );
+    println!(
+        "Mean convex‑hull volume: {:.3} m³",
+        final_stats.hull_volume_sum / final_stats.file_count as f64
+    );
+    println!(
+        "Mean hull surface area: {:.3} m²",
+        final_stats.hull_area_sum / final_stats.file_count as f64
+    );
+    println!(
+        "Mean bbox utilisation by hull: {:.2} %",
+        100.0 * final_stats.utilisation_sum / final_stats.file_count as f64
     );
 
-    // Compute volume for density.
-    let volume = (final_stats.global_max_x - final_stats.global_min_x)
-        * (final_stats.global_max_y - final_stats.global_min_y)
-        * (final_stats.global_max_z - final_stats.global_min_z);
-    let overall_density = if volume > 0.0 {
-        final_stats.total_points as f64 / volume
-    } else {
-        0.0
-    };
-    println!("Overall density (points per m^3): {:.3}", overall_density);
+    let mean_eigs: Vec<f64> = final_stats
+        .pca_eigen_sum
+        .iter()
+        .map(|v| v / final_stats.file_count as f64)
+        .collect();
+    println!(
+        "Mean PCA eigenvalues (λ₁, λ₂, λ₃): [{:.3}, {:.3}, {:.3}]",
+        mean_eigs[0], mean_eigs[1], mean_eigs[2]
+    );
+    println!(
+        "If λ₃ ≪ λ₂, the cloud is effectively planar; if λ₂ ≪ λ₁ as well, it is almost linear."
+    );
+
+    // Density statistics.
+    if final_stats.file_count > 0 {
+        let overall_mean_density = final_stats.density_sum / final_stats.file_count as f64;
+        println!(
+            "Mean density (Voxel method): {:.3} points / m³",
+            overall_mean_density
+        );
+    }
+
+    let (x, y, z) = final_stats.overall_mean_position();
+    println!("Mean origo: [x: {:.3}, y: {:.3}, z: {:.3}]", x, y, z);
 
     // File points statistics.
     println!(
-        "Mean number of points per file: {:.2}",
+        "Mean points: {:.3}",
         final_stats.calculate_mean_file_points()
     );
     println!(
-        "Median number of points per file: {:.2}",
+        "Median points: {:.3}",
         final_stats.calculate_median_file_points()
     );
 
     // Classification distribution.
     if !final_stats.classification_counts.is_empty() {
-        println!("Overall classification distribution:");
+        println!("Class distribution:");
         let items: Vec<_> = final_stats
             .classification_counts
             .into_iter()
@@ -251,7 +318,7 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
             .collect();
         for (class, count) in items.iter() {
             let percentage = (*count as f64 / final_stats.total_points as f64) * 100.0;
-            println!("  Class {}: {} points ({:.3}%)", class, count, percentage);
+            println!("  Class {}: {} points ({:.2} %)", class, count, percentage);
         }
     }
 
@@ -259,11 +326,11 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
     if final_stats.intensity_count > 0 {
         let overall_mean_intensity =
             final_stats.intensity_sum as f64 / final_stats.intensity_count as f64;
-        println!("Overall intensity mean: {:.3}", overall_mean_intensity);
-        println!("Overall intensity distribution:");
+        println!("Mean intensity: {:.3}", overall_mean_intensity);
+        println!("Intensity distribution:");
         for (bin, count) in final_stats.intensity_distribution.iter() {
             let percentage = (*count as f64 / final_stats.intensity_count as f64) * 100.0;
-            println!("  {}: {} points ({:.2}%)", bin, count, percentage);
+            println!("  {}: {} points ({:.3}%)", bin, count, percentage);
         }
     }
 

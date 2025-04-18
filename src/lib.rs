@@ -1,6 +1,7 @@
 use clap::Args;
 
 pub mod commands;
+pub mod shared;
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum DynFieldType {

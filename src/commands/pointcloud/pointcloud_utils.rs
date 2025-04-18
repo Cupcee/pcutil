@@ -2,17 +2,101 @@ use anyhow::{bail, Context, Result};
 use bytemuck;
 use pasture_core::layout::attributes;
 use pasture_core::layout::{PointAttributeDefinition, PointLayout};
-use pasture_core::nalgebra::Vector3;
+use pasture_core::nalgebra::{Matrix3, SymmetricEigen, Vector3};
 use pasture_core::{
     containers::BorrowedBuffer, containers::BorrowedBufferExt, containers::BorrowedMutBuffer,
     containers::OwningBuffer, containers::VectorBuffer,
 };
+use qhull::QhBuilder;
+use rand::{rngs::SmallRng, Rng, SeedableRng};
 
 use crate::DynFieldType;
 use pasture_io::base::read_all;
 use pcd_rs::DynReader;
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
+
+const MAX_HULL_POINTS: usize = 50_000; // keep RAM usage tiny
+
+fn sample_for_hull(xs: &[f64], ys: &[f64], zs: &[f64]) -> Vec<[f64; 3]> {
+    let n = xs.len();
+    if n <= MAX_HULL_POINTS {
+        return xs
+            .iter()
+            .zip(ys)
+            .zip(zs)
+            .map(|((&x, &y), &z)| [x, y, z])
+            .collect();
+    }
+    let mut rng = SmallRng::from_os_rng();
+    let mut reservoir = (0..MAX_HULL_POINTS)
+        .map(|i| [xs[i], ys[i], zs[i]])
+        .collect::<Vec<_>>();
+    for i in MAX_HULL_POINTS..n {
+        let j = rng.random_range(0..=i);
+        if j < MAX_HULL_POINTS {
+            reservoir[j] = [xs[i], ys[i], zs[i]];
+        }
+    }
+    reservoir
+}
+
+/// Return (volume, surface_area) of the convex hull built from `points`.
+///
+/// Internally we:
+///   1.  build the hull with `qhull`
+///   2.  iterate over each facet
+///   3.  triangulate the facet (fan with the first vertex)
+///   4.  accumulate triangle areas and signed tetra volumes
+///
+/// The signed‑volume trick is robust: if the facet ordering is
+/// consistent (Qhull guarantees it) the total signed volume equals the
+/// actual volume; we take `abs()` at the end for safety.
+fn hull_volume_area(points: &[[f64; 3]]) -> (f64, f64) {
+    // ---------- build hull ----------
+    let qh = QhBuilder::default()
+        .capture_stdout(true)
+        .capture_stderr(true)
+        .compute(true) // run qhull immediately
+        .build_from_iter(points.iter().copied())
+        .unwrap();
+
+    let mut volume = 0.0_f64;
+    let mut area = 0.0_f64;
+
+    // ---------- loop over facets ----------
+    for facet in qh.facets() {
+        let verts = facet.vertices().expect("facet has no vertices");
+        // Collect coordinates once
+        let coords: Vec<Vector3<f64>> = verts
+            .iter()
+            .map(|v| {
+                let p = v.point().expect("vertex has no point");
+                Vector3::new(p[0], p[1], p[2])
+            })
+            .collect();
+
+        if coords.len() < 3 {
+            // degenerate facet – ignore
+            continue;
+        }
+
+        // Fan triangulation around coords[0]
+        let a = coords[0];
+        for i in 1..coords.len() - 1 {
+            let b = coords[i];
+            let c = coords[i + 1];
+
+            // Triangle area
+            area += (b - a).cross(&(c - a)).norm() * 0.5;
+
+            // Signed tetra volume w.r.t. origin
+            volume += a.dot(&(b.cross(&c))) / 6.0;
+        }
+    }
+
+    (volume.abs(), area)
+}
 
 /// Determine file extension in lowercase.
 pub fn extension(path: &str) -> String {
@@ -212,6 +296,14 @@ pub struct PointcloudSummary {
     pub sum_x: f64,
     pub sum_y: f64,
     pub sum_z: f64,
+    pub bbox_volume: f64,
+    pub convex_hull_volume: f64,
+    pub convex_hull_area: f64,
+    pub bbox_utilisation: f64,     // hull / bbox (0‒1)
+    pub pca_eigenvalues: Vec<f64>, // λ₁ ≥ λ₂ ≥ λ₃
+    pub pca_lengths: [f64; 3],     // 2√λ (≈ diameter along each PC axis)
+    pub pca_ratio12: f64,          // λ₂ / λ₁  (planarity indicator)
+    pub pca_ratio23: f64,          // λ₃ / λ₂  (linearity indicator)
 }
 
 /// Compute summary statistics for a given point cloud buffer.
@@ -290,30 +382,75 @@ pub fn compute_summary(buffer: &VectorBuffer) -> Result<PointcloudSummary> {
     let mean_z = sum_z / total_points as f64;
     let mean_radius = sum_radius / total_points as f64;
 
-    // Compute medians for x, y, z, and radius.
-    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    radii.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    // Compute density: points per cubic meter.
+    let dx = max_x - min_x;
+    let dy = max_y - min_y;
+    let dz = max_z - min_z;
+    let bbox_volume = dx * dy * dz;
 
-    let median = |v: &Vec<f64>| -> f64 {
-        let mid = v.len() / 2;
-        if v.len() % 2 == 0 {
-            (v[mid - 1] + v[mid]) / 2.0
-        } else {
-            v[mid]
-        }
+    // 1. Voxel edge length l  ≈  2 × average point spacing
+    let avg_spacing = (bbox_volume / total_points as f64).cbrt();
+    let l = 2.0 * avg_spacing; // same unit as your coordinates
+    let l3 = l * l * l; // voxel volume
+
+    // 2. Count points per voxel (sparse hashmap)
+    let mut voxel_counts: HashMap<(i32, i32, i32), u32> = HashMap::new();
+    for i in 0..total_points {
+        let ix = ((xs[i] - min_x) / l).floor() as i32;
+        let iy = ((ys[i] - min_y) / l).floor() as i32;
+        let iz = ((zs[i] - min_z) / l).floor() as i32;
+        *voxel_counts.entry((ix, iy, iz)).or_default() += 1;
+    }
+
+    // 3. Convert to density (points per m³) – here we take the mean
+    let occupied_voxels = voxel_counts.len() as f64;
+    let density = (total_points as f64 / occupied_voxels) / l3;
+
+    // --- PCA (covariance eigen‑decomposition) ---
+    let mut cov = Matrix3::<f64>::zeros();
+    for i in 0..total_points {
+        let dx = xs[i] - mean_x;
+        let dy = ys[i] - mean_y;
+        let dz = zs[i] - mean_z;
+        cov[(0, 0)] += dx * dx;
+        cov[(0, 1)] += dx * dy;
+        cov[(0, 2)] += dx * dz;
+        cov[(1, 1)] += dy * dy;
+        cov[(1, 2)] += dy * dz;
+        cov[(2, 2)] += dz * dz;
+    }
+    // Upper triangle mirror
+    cov[(1, 0)] = cov[(0, 1)];
+    cov[(2, 0)] = cov[(0, 2)];
+    cov[(2, 1)] = cov[(1, 2)];
+    cov /= total_points as f64;
+
+    let eig = SymmetricEigen::new(cov);
+    let mut eigvals = eig.eigenvalues.as_slice().to_owned();
+    eigvals.sort_by(|a, b| b.partial_cmp(a).unwrap()); // λ₁≥λ₂≥λ₃
+
+    let pca_lengths = [
+        2.0 * eigvals[0].sqrt(),
+        2.0 * eigvals[1].sqrt(),
+        2.0 * eigvals[2].sqrt(),
+    ];
+    let pca_ratio12 = if eigvals[0] > 0.0 {
+        eigvals[1] / eigvals[0]
+    } else {
+        0.0
+    };
+    let pca_ratio23 = if eigvals[1] > 0.0 {
+        eigvals[2] / eigvals[1]
+    } else {
+        0.0
     };
 
-    let median_x = median(&xs);
-    let median_y = median(&ys);
-    let median_z = median(&zs);
-    let median_radius = median(&radii);
-
-    // Compute density: points per cubic meter.
-    let volume = (max_x - min_x) * (max_y - min_y) * (max_z - min_z);
-    let density = if volume > 0.0 {
-        total_points as f64 / volume
+    // Stats derived from Convex Hull
+    let bbox_volume = dx * dy * dz;
+    let sample = sample_for_hull(&xs, &ys, &zs);
+    let (hull_volume, hull_area) = hull_volume_area(&sample);
+    let bbox_utilisation = if bbox_volume > 0.0 {
+        (hull_volume / bbox_volume).clamp(0.0, 1.0)
     } else {
         0.0
     };
@@ -386,6 +523,26 @@ pub fn compute_summary(buffer: &VectorBuffer) -> Result<PointcloudSummary> {
         None
     };
 
+    // Compute medians for x, y, z, and radius.
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    ys.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    zs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    radii.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+    let median = |v: &Vec<f64>| -> f64 {
+        let mid = v.len() / 2;
+        if v.len() % 2 == 0 {
+            (v[mid - 1] + v[mid]) / 2.0
+        } else {
+            v[mid]
+        }
+    };
+
+    let median_x = median(&xs);
+    let median_y = median(&ys);
+    let median_z = median(&zs);
+    let median_radius = median(&radii);
+
     Ok(PointcloudSummary {
         total_points,
         min_x,
@@ -408,5 +565,13 @@ pub fn compute_summary(buffer: &VectorBuffer) -> Result<PointcloudSummary> {
         sum_x,
         sum_y,
         sum_z,
+        bbox_volume,
+        convex_hull_volume: hull_volume,
+        convex_hull_area: hull_area,
+        bbox_utilisation,
+        pca_eigenvalues: eigvals,
+        pca_lengths,
+        pca_ratio12,
+        pca_ratio23,
     })
 }
