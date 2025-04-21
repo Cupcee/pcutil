@@ -1,5 +1,4 @@
 use anyhow::Result;
-use histo::Histogram;
 use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
 use rayon::prelude::*;
@@ -9,14 +8,17 @@ use std::path::Path;
 use walkdir::WalkDir;
 
 use crate::commands::pointcloud::pointcloud_utils::{
-    compute_summary, extension, is_supported_extension, read_pointcloud_file_to_buffer,
-    PointcloudSummary,
+    compute_summary, extension, is_supported_extension, read_pointcloud_file_to_buffer, rms_spread,
+    scale_outliers, PointcloudSummary,
 };
+use crate::shared::histogram::Histogram;
 use crate::shared::progressbar::get_progress_bar;
 use crate::PointcloudSummaryArgs;
+use colored::Colorize;
 
 /// Aggregated statistics over multiple point cloud files.
 struct Stats {
+    file_names: Vec<String>,
     total_points: usize,
     global_min_x: f64,
     global_max_x: f64,
@@ -27,6 +29,8 @@ struct Stats {
     sum_x: f64,
     sum_y: f64,
     sum_z: f64,
+    centroids: Vec<(f64, f64, f64)>,
+    extents: Vec<(f64, f64, f64)>,
     file_point_counts: Vec<usize>,
     classification_counts: HashMap<u8, usize>,
     density_sum: f64,
@@ -41,6 +45,7 @@ struct Stats {
 impl Stats {
     fn new() -> Self {
         Self {
+            file_names: Vec::new(),
             total_points: 0,
             global_min_x: f64::MAX,
             global_max_x: f64::MIN,
@@ -51,6 +56,8 @@ impl Stats {
             sum_x: 0.0,
             sum_y: 0.0,
             sum_z: 0.0,
+            centroids: Vec::new(),
+            extents: Vec::new(),
             file_point_counts: Vec::new(),
             classification_counts: HashMap::new(),
             density_sum: 0.0,
@@ -64,6 +71,7 @@ impl Stats {
     }
 
     fn update(&mut self, summary: PointcloudSummary) {
+        self.file_names.push(summary.file_name);
         self.total_points += summary.total_points;
         self.global_min_x = self.global_min_x.min(summary.min_x);
         self.global_max_x = self.global_max_x.max(summary.max_x);
@@ -74,6 +82,13 @@ impl Stats {
         self.sum_x += summary.sum_x;
         self.sum_y += summary.sum_y;
         self.sum_z += summary.sum_z;
+        self.centroids
+            .push((summary.mean_x, summary.mean_y, summary.mean_z));
+        self.extents.push((
+            summary.max_x - summary.min_x,
+            summary.max_y - summary.min_y,
+            summary.max_z - summary.min_z,
+        ));
         self.file_point_counts.push(summary.total_points);
 
         if let Some(class_counts) = summary.classification_counts {
@@ -94,6 +109,7 @@ impl Stats {
     }
 
     fn merge(&mut self, other: Stats) {
+        self.file_names.extend(other.file_names);
         self.total_points += other.total_points;
         self.global_min_x = self.global_min_x.min(other.global_min_x);
         self.global_max_x = self.global_max_x.max(other.global_max_x);
@@ -105,6 +121,8 @@ impl Stats {
         self.sum_y += other.sum_y;
         self.sum_z += other.sum_z;
         self.file_point_counts.extend(other.file_point_counts);
+        self.centroids.extend(other.centroids);
+        self.extents.extend(other.extents);
 
         for (class, count) in other.classification_counts {
             *self.classification_counts.entry(class).or_insert(0) += count;
@@ -166,7 +184,7 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
         .with_style(get_progress_bar("Computing per-file stats"))
         .filter_map(|path| {
             match read_pointcloud_file_to_buffer(path, args.factor, args.pcd_dyn_fields.clone()) {
-                Ok(buffer) => match compute_summary(&buffer) {
+                Ok(buffer) => match compute_summary(path.to_string(), &buffer) {
                     Ok(summary) => Some(summary),
                     Err(err) => {
                         eprintln!(
@@ -205,26 +223,33 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
     let is_multiple_files = paths.len() > 1;
 
     if is_multiple_files {
-        println!("Summary for files in {}", &args.input);
-        println!("Directory dataset details");
+        println!("{} {}", "Summary for files in ".bold(), &args.input);
         println!("Total number of files: {}", count_files_total);
-        println!(
-            "Failed to read or summarize: {} files",
-            count_files_total - count_read_successfully
-        );
-        println!("Unique filetypes: {}", unique_extensions.join(", "));
+        let failed_read = count_files_total - count_read_successfully;
+        if failed_read > 0 {
+            println!(
+                "[{}] Failed to read or summarize: {} files",
+                "WARNING".yellow(),
+                failed_read
+            );
+        }
+        println!("Unique filetypes: {}\n", unique_extensions.join(", "));
     } else {
-        println!("Summary for file {}", &args.input.as_str());
+        println!("{} {}\n", "Summary for file".bold(), &args.input.as_str());
     }
 
-    let aggregate_method = if is_multiple_files { "Mean " } else { "" };
-    println!("Total number of points: {}", final_stats.total_points);
+    let aggregate_method = if is_multiple_files {
+        "Dataset mean"
+    } else {
+        "File"
+    };
+    // println!("Total number of points: {}", final_stats.total_points);
     if let Some(hist) = final_stats.calculate_point_count_histogram() {
-        println!("=== Histogram ===");
+        println!("{}", "Point count statistics:".bold());
         println!("{}", hist);
     }
 
-    println!("Axis‑aligned bounding‑box:");
+    println!("{}", "Axis-aligned bounding box:".bold());
     println!(
         " - x: [{:.3}, {:.3}]",
         final_stats.global_min_x, final_stats.global_max_x
@@ -234,26 +259,27 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
         final_stats.global_min_y, final_stats.global_max_y
     );
     println!(
-        " - z: [{:.3}, {:.3}]",
+        " - z: [{:.3}, {:.3}]\n",
         final_stats.global_min_z, final_stats.global_max_z
     );
 
     println!(
-        "{}bounding‑box volume: {:.3} m³",
+        "{} bounding‑box volume: {:.3} m³",
         aggregate_method,
         final_stats.bbox_volume_sum / final_stats.file_count as f64
     );
     println!(
-        "{}convex‑hull volume: {:.3} m³",
+        "{} convex‑hull volume: {:.3} m³",
         aggregate_method,
         final_stats.hull_volume_sum / final_stats.file_count as f64
     );
     println!(
-        "{}Bbox utilization by convex-hull: {:.2}%",
+        "{} bbox utilization by convex-hull: {:.2}%",
         aggregate_method,
         100.0 * final_stats.utilisation_sum / final_stats.file_count as f64
     );
 
+    println!("\n{}", "Shape measures:".bold());
     let mean_eigs: Vec<f64> = final_stats
         .pca_eigen_sum
         .iter()
@@ -262,34 +288,118 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
     // normalize by min value for easier reading
     let min_eig = mean_eigs.iter().copied().reduce(f64::min).unwrap_or(0.0);
     println!(
-        "{}PCA eigenvalues (λ₁:λ₂:λ₃): [{:.3}:{:.3}:{:.3}]",
+        "{} PCA eigenvalues ({}:{}:{}): [{}:{}:{}]",
         aggregate_method,
-        mean_eigs[0] / min_eig,
-        mean_eigs[1] / min_eig,
-        mean_eigs[2] / min_eig
+        "λ₁".red(),
+        "λ₂".green(),
+        "λ₃".blue(),
+        (mean_eigs[0] / min_eig).round().to_string().red(),
+        (mean_eigs[1] / min_eig).round().to_string().green(),
+        (mean_eigs[2] / min_eig).round().to_string().blue(),
     );
     println!(
-        " - 100:10:1: Urban mobile strip. Street very long; cross-street details moderate; vertical noise small.",
+        " - {}:{}:{}: Urban mobile strip. Street very long; cross-street details moderate; vertical noise small.",
+        "100".red(), "10".green(), "1".blue(),
     );
-    println!(" - 100:1:0.1: Building facede. Flat wall, little depth");
-    println!(" - 10:10:5: MLS Tree row. Trees fill space in all but vertical direction.",);
-    println!(" - 1:1:1: Manufactured part. Symmetric object; scale set by its bbox coordinates.\n",);
+    println!(
+        " - {}:{}:{}: Building facede. Flat wall, little depth",
+        "100".red(),
+        "1".green(),
+        "0.1".blue()
+    );
+    println!(
+        " - {}:{}:{}: MLS Tree row. Trees fill space in all but vertical direction.",
+        "10".red(),
+        "10".green(),
+        "5".blue()
+    );
+    println!(
+        " - {}:{}:{}: Manufactured part. Symmetric object; scale set by its bbox coordinates.",
+        "1".red(),
+        "1".green(),
+        "1".blue()
+    );
 
     let overall_mean_density = final_stats.density_sum / final_stats.file_count as f64;
     println!(
-        "{}Density (Voxel method): {:.3} points / m³",
+        "{} density (Voxel method): {:.3} points / m³",
         aggregate_method, overall_mean_density
     );
 
     let (x, y, z) = final_stats.overall_mean_position();
     println!(
-        "{}Origo: [x: {:.3}, y: {:.3}, z: {:.3}]\n",
+        "{} origo: [x: {:.3}, y: {:.3}, z: {:.3}]\n",
         aggregate_method, x, y, z
     );
 
+    if is_multiple_files {
+        println!("{}", "Frame alignment measures:".bold());
+        if let Some(rms_spread_metric) = rms_spread(&final_stats.extents, &final_stats.centroids) {
+            println!("1. Translation outlier test (RMS spread):");
+            match rms_spread_metric {
+                0.0..0.1 => {
+                    println!(
+                        " - [{}] [{:.3}] <= 0.1. All clouds likely have aligned origin.",
+                        "OK".green(),
+                        rms_spread_metric
+                    );
+                }
+                0.1..0.5 => {
+                    println!(
+                        " - [{}] 0.1 < [{:.3}] <= 0.5. RMS Spread borderline unusual. Consider visually checking for misaligned origins / coordinate systems.",
+                        "BORDERLINE".yellow(),
+                        rms_spread_metric
+                    );
+                }
+                _ => {
+                    println!(
+                        " - [{}] [{:.3}] > 0.5. Frames probably differ in their origins.",
+                        "WARNING".red(),
+                        rms_spread_metric
+                    );
+                }
+            }
+        }
+        if final_stats.extents.len() > 0 {
+            println!(
+                "2. Scale outlier test (Modified z-score outlier test, 'Iglewicz-Hoaglin method'):"
+            );
+            let outliers = scale_outliers(&final_stats.extents);
+            if outliers.is_empty() {
+                println!("[{}] All files pass the scale test.", "OK".green())
+            } else {
+                for (modified_z_score, file_name) in outliers
+                    .iter()
+                    .zip(final_stats.file_names)
+                    .sorted_by_key(|items| items.1.clone())
+                {
+                    match *modified_z_score {
+                        0.0..3.5 => {}
+                        3.5..7.0 => {
+                            println!(
+                                " - [{}] File {}: 3.5 <= [{:.3}] < 7.0. Possible scale outlier.",
+                                "BORDERLINE".yellow(),
+                                file_name,
+                                modified_z_score
+                            );
+                        }
+                        _ => {
+                            println!(
+                                " - [{}] File {}: [{:.3}] >= 7.0. Likely scale outlier.",
+                                "WARNING".red(),
+                                file_name,
+                                modified_z_score
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // --- optional blocks ---------------------------------------------------
     if !final_stats.classification_counts.is_empty() {
-        println!("Class distribution");
+        println!("\n{}", "Class distribution".bold());
         for (class, count) in final_stats
             .classification_counts
             .iter()

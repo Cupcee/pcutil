@@ -22,7 +22,7 @@ indicatif = { version = "0.17.11", features = ["rayon"] }
 rand = { version = "0.9.1", features = ["small_rng"] }
 qhull = "0.3.0"
 termimad = "0.31.3"
-histo = "1.0.0"
+colored = "3.0.0"
 
 [dev-dependencies]
 uuid = { version = "1.0", features = ["v4"] }
