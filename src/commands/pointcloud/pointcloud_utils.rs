@@ -43,7 +43,7 @@ pub struct PointcloudSummary {
     pub convex_hull_volume: f64,
     pub convex_hull_area: f64,
     pub bbox_utilisation: f64,     // hull / bbox (0‒1)
-    pub pca_eigenvalues: Vec<f64>, // λ₁ ≥ λ₂ ≥ λ₃
+    pub pca_eigenvalues: [f64; 3], // λ₁ ≥ λ₂ ≥ λ₃
 }
 
 impl PointcloudSummary {
@@ -207,7 +207,7 @@ impl PointcloudSummary {
             convex_hull_volume: hull_volume,
             convex_hull_area: hull_area,
             bbox_utilisation,
-            pca_eigenvalues: eigvals,
+            pca_eigenvalues: [eigvals[0], eigvals[1], eigvals[2]],
         })
     }
 }

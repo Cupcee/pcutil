@@ -37,14 +37,14 @@ struct Stats {
     hull_area_sum: f64,
     bbox_volume_sum: f64,
     utilisation_sum: f64,
-    pca_eigen_sum: Vec<f64>,
+    pca_eigen_sum: [f64; 3],
     file_count: usize,
 }
 
 impl Stats {
-    fn new() -> Self {
+    fn with_capacity(capacity: usize) -> Self {
         Self {
-            file_names: Vec::new(),
+            file_names: Vec::with_capacity(capacity),
             total_points: 0,
             global_min_x: f64::MAX,
             global_max_x: f64::MIN,
@@ -55,16 +55,16 @@ impl Stats {
             sum_x: 0.0,
             sum_y: 0.0,
             sum_z: 0.0,
-            centroids: Vec::new(),
-            extents: Vec::new(),
-            file_point_counts: Vec::new(),
-            classification_counts: HashMap::new(),
+            centroids: Vec::with_capacity(capacity),
+            extents: Vec::with_capacity(capacity),
+            file_point_counts: Vec::with_capacity(capacity),
+            classification_counts: HashMap::with_capacity(capacity),
             density_sum: 0.0,
             hull_volume_sum: 0.0,
             hull_area_sum: 0.0,
             bbox_volume_sum: 0.0,
             utilisation_sum: 0.0,
-            pca_eigen_sum: vec![0.0; 3],
+            pca_eigen_sum: [0.0, 0.0, 0.0],
             file_count: 0,
         }
     }
@@ -167,8 +167,43 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
     let paths = gather_pointcloud_paths(&args.input, args.recursive)?;
     ensure_nonempty(&paths, &args.input)?;
 
-    let (summaries, read_failures) = compute_summaries(&paths, &args);
-    let final_stats = aggregate_stats(summaries);
+    // Determine per-thread capacity
+    let num_threads = rayon::current_num_threads();
+    let items = paths.len();
+    let per_thread_capacity = ((items + num_threads - 1) / num_threads) + 2;
+
+    // Read, summarize, and aggregate in one parallel pass
+    let (final_stats, read_failures) = paths
+        .par_iter()
+        .progress()
+        .with_style(get_progress_bar("Computing & aggregating stats"))
+        .fold(
+            || (Stats::with_capacity(per_thread_capacity), 0usize),
+            |(mut st, mut fails), path| {
+                match read_pointcloud_file_to_buffer(path, args.factor, args.pcd_dyn_fields.clone())
+                {
+                    Ok(buf) => match PointcloudSummary::from(path.clone(), &buf) {
+                        Ok(summary) => st.update(summary),
+                        Err(e) => {
+                            eprintln!("Skipping {}: summarization error: {}", path, e);
+                            fails += 1;
+                        }
+                    },
+                    Err(e) => {
+                        eprintln!("Skipping {}: read error: {}", path, e);
+                        fails += 1;
+                    }
+                }
+                (st, fails)
+            },
+        )
+        .reduce(
+            || (Stats::with_capacity(per_thread_capacity), 0usize),
+            |(mut st1, f1), (st2, f2)| {
+                st1.merge(st2);
+                (st1, f1 + f2)
+            },
+        );
 
     print_header(&args.input, &paths, read_failures);
     let is_multi = paths.len() > 1;
@@ -186,55 +221,12 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
     Ok(())
 }
 
-// ——— Helper functions ————————————————————————————————————————————————————————————
-
 fn ensure_nonempty(paths: &[String], input: &str) -> Result<()> {
     if paths.is_empty() {
         eprintln!("No pointcloud files found at '{}'", input);
         Err(anyhow::anyhow!("no files found"))?
     }
     Ok(())
-}
-
-fn compute_summaries(
-    paths: &[String],
-    args: &PointcloudSummaryArgs,
-) -> (Vec<PointcloudSummary>, usize) {
-    let summaries: Vec<_> = paths
-        .par_iter()
-        .progress()
-        .with_style(get_progress_bar("Computing per-file stats"))
-        .filter_map(|path| {
-            match read_pointcloud_file_to_buffer(path, args.factor, args.pcd_dyn_fields.clone()) {
-                Ok(buf) => match PointcloudSummary::from(path.clone(), &buf) {
-                    Ok(sum) => Some(sum),
-                    Err(e) => {
-                        eprintln!("Skipping {}: summarization error: {}", path, e);
-                        None
-                    }
-                },
-                Err(e) => {
-                    eprintln!("Skipping {}: read error: {}", path, e);
-                    None
-                }
-            }
-        })
-        .collect();
-    let failed = summaries.len();
-    (summaries, failed)
-}
-
-fn aggregate_stats(summaries: Vec<PointcloudSummary>) -> Stats {
-    summaries
-        .into_par_iter()
-        .fold(Stats::new, |mut st, s| {
-            st.update(s);
-            st
-        })
-        .reduce(Stats::new, |mut a, b| {
-            a.merge(b);
-            a
-        })
 }
 
 fn print_header(input: &str, paths: &[String], failed: usize) {
