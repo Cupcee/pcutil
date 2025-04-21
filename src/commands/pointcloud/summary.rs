@@ -1,20 +1,19 @@
 use anyhow::Result;
+use colored::Colorize;
 use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::path::Path;
-
 use walkdir::WalkDir;
 
 use crate::commands::pointcloud::pointcloud_utils::{
-    compute_summary, extension, is_supported_extension, read_pointcloud_file_to_buffer, rms_spread,
-    scale_outliers, PointcloudSummary,
+    extension, is_supported_extension, read_pointcloud_file_to_buffer, PointcloudSummary,
 };
 use crate::shared::histogram::Histogram;
+use crate::shared::math::{rms_spread, scale_outliers};
 use crate::shared::progressbar::get_progress_bar;
 use crate::PointcloudSummaryArgs;
-use colored::Colorize;
 
 /// Aggregated statistics over multiple point cloud files.
 struct Stats {
@@ -65,7 +64,7 @@ impl Stats {
             hull_area_sum: 0.0,
             bbox_volume_sum: 0.0,
             utilisation_sum: 0.0,
-            pca_eigen_sum: vec![0_f64; 3],
+            pca_eigen_sum: vec![0.0; 3],
             file_count: 0,
         }
     }
@@ -140,13 +139,14 @@ impl Stats {
 
     fn calculate_point_count_histogram(&self) -> Option<Histogram> {
         if self.file_point_counts.len() > 1 {
-            let mut histogram = Histogram::with_buckets(10);
-            for sample in self.file_point_counts.iter() {
-                histogram.add(*sample as u64);
+            let mut hist = Histogram::with_buckets(10);
+            for &count in &self.file_point_counts {
+                hist.add(count as u64);
             }
-            return Some(histogram);
+            Some(hist)
+        } else {
+            None
         }
-        None
     }
 
     fn overall_mean_position(&self) -> (f64, f64, f64) {
@@ -162,147 +162,163 @@ impl Stats {
     }
 }
 
+/// Main entry point
 pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
-    // Gather pointcloud filepaths based on args.
     let paths = gather_pointcloud_paths(&args.input, args.recursive)?;
-    let unique_extensions: Vec<_> = paths
-        .iter()
-        .map(|path| format!("'{}'", extension(path)))
-        .unique()
-        .collect();
+    ensure_nonempty(&paths, &args.input)?;
 
-    if paths.is_empty() {
-        eprintln!("No pointcloud files found at '{}'", args.input);
-        return Ok(());
+    let (summaries, read_failures) = compute_summaries(&paths, &args);
+    let final_stats = aggregate_stats(summaries);
+
+    print_header(&args.input, &paths, read_failures);
+    let is_multi = paths.len() > 1;
+
+    if let Some(hist) = final_stats.calculate_point_count_histogram() {
+        print_histogram(&hist);
     }
-    let count_files_total = paths.len();
+    print_bounding_box(&final_stats);
+    print_volumes(&final_stats, is_multi);
+    print_shape_measures(&final_stats, is_multi);
+    print_density_and_origin(&final_stats, is_multi);
+    print_frame_alignment(&final_stats, is_multi);
+    print_class_distribution(&final_stats);
 
-    // For each file, read the buffer and compute its summary.
-    let summaries: Vec<PointcloudSummary> = paths
+    Ok(())
+}
+
+// ——— Helper functions ————————————————————————————————————————————————————————————
+
+fn ensure_nonempty(paths: &[String], input: &str) -> Result<()> {
+    if paths.is_empty() {
+        eprintln!("No pointcloud files found at '{}'", input);
+        Err(anyhow::anyhow!("no files found"))?
+    }
+    Ok(())
+}
+
+fn compute_summaries(
+    paths: &[String],
+    args: &PointcloudSummaryArgs,
+) -> (Vec<PointcloudSummary>, usize) {
+    let summaries: Vec<_> = paths
         .par_iter()
         .progress()
         .with_style(get_progress_bar("Computing per-file stats"))
         .filter_map(|path| {
             match read_pointcloud_file_to_buffer(path, args.factor, args.pcd_dyn_fields.clone()) {
-                Ok(buffer) => match compute_summary(path.to_string(), &buffer) {
-                    Ok(summary) => Some(summary),
-                    Err(err) => {
-                        eprintln!(
-                            "Skipping file {} due to error in summarization: {}",
-                            path, err
-                        );
+                Ok(buf) => match PointcloudSummary::from(path.clone(), &buf) {
+                    Ok(sum) => Some(sum),
+                    Err(e) => {
+                        eprintln!("Skipping {}: summarization error: {}", path, e);
                         None
                     }
                 },
-                Err(err) => {
-                    eprintln!("Skipping file {} due to error in reading: {}", path, err);
+                Err(e) => {
+                    eprintln!("Skipping {}: read error: {}", path, e);
                     None
                 }
             }
         })
         .collect();
+    let failed = summaries.len();
+    (summaries, failed)
+}
 
-    let count_read_successfully = summaries.len();
-    let final_stats = summaries
+fn aggregate_stats(summaries: Vec<PointcloudSummary>) -> Stats {
+    summaries
         .into_par_iter()
-        .fold(
-            || Stats::new(),
-            |mut acc, summary| {
-                acc.update(summary);
-                acc
-            },
-        )
-        .reduce(
-            || Stats::new(),
-            |mut a, b| {
-                a.merge(b);
-                a
-            },
-        );
+        .fold(Stats::new, |mut st, s| {
+            st.update(s);
+            st
+        })
+        .reduce(Stats::new, |mut a, b| {
+            a.merge(b);
+            a
+        })
+}
 
-    let is_multiple_files = paths.len() > 1;
+fn print_header(input: &str, paths: &[String], failed: usize) {
+    let multi = paths.len() > 1;
+    let uniq_exts = paths
+        .iter()
+        .map(|p| format!("'{}'", extension(p)))
+        .unique()
+        .collect::<Vec<_>>()
+        .join(", ");
 
-    if is_multiple_files {
-        println!("{} {}", "Summary for files in ".bold(), &args.input);
-        println!("Total number of files: {}", count_files_total);
-        let failed_read = count_files_total - count_read_successfully;
-        if failed_read > 0 {
+    if multi {
+        println!("{} {}", "Summary for files in".bold(), input);
+        println!("Total files: {}", paths.len());
+        if failed > 0 {
             println!(
-                "[{}] Failed to read or summarize: {} files",
+                "[{}] Failed to process: {} files",
                 "WARNING".yellow(),
-                failed_read
+                failed
             );
         }
-        println!("Unique filetypes: {}\n", unique_extensions.join(", "));
+        println!("Unique types: {}\n", uniq_exts);
     } else {
-        println!("{} {}\n", "Summary for file".bold(), &args.input.as_str());
+        println!("{} {}\n", "Summary for file".bold(), input);
     }
+}
 
-    let aggregate_method = if is_multiple_files {
-        "Dataset mean"
-    } else {
-        "File"
-    };
-    // println!("Total number of points: {}", final_stats.total_points);
-    if let Some(hist) = final_stats.calculate_point_count_histogram() {
-        println!("{}", "Point count statistics:".bold());
-        println!("{}", hist);
-    }
+fn print_histogram(hist: &Histogram) {
+    println!("{}", "Point count statistics:".bold());
+    println!("{}", hist);
+}
 
+fn print_bounding_box(st: &Stats) {
     println!("{}", "Axis-aligned bounding box:".bold());
-    println!(
-        " - x: [{:.3}, {:.3}]",
-        final_stats.global_min_x, final_stats.global_max_x
-    );
-    println!(
-        " - y: [{:.3}, {:.3}]",
-        final_stats.global_min_y, final_stats.global_max_y
-    );
-    println!(
-        " - z: [{:.3}, {:.3}]\n",
-        final_stats.global_min_z, final_stats.global_max_z
-    );
+    println!(" - x: [{:.3}, {:.3}]", st.global_min_x, st.global_max_x);
+    println!(" - y: [{:.3}, {:.3}]", st.global_min_y, st.global_max_y);
+    println!(" - z: [{:.3}, {:.3}]\n", st.global_min_z, st.global_max_z);
+}
 
+fn print_volumes(st: &Stats, multi: bool) {
+    let label = if multi { "Dataset mean" } else { "File" };
     println!(
-        "{} bounding‑box volume: {:.3} m³",
-        aggregate_method,
-        final_stats.bbox_volume_sum / final_stats.file_count as f64
+        "{} bounding-box volume: {:.3} m³",
+        label,
+        st.bbox_volume_sum / st.file_count as f64
     );
     println!(
-        "{} convex‑hull volume: {:.3} m³",
-        aggregate_method,
-        final_stats.hull_volume_sum / final_stats.file_count as f64
+        "{} convex-hull volume: {:.3} m³",
+        label,
+        st.hull_volume_sum / st.file_count as f64
     );
     println!(
-        "{} bbox utilization by convex-hull: {:.2}%",
-        aggregate_method,
-        100.0 * final_stats.utilisation_sum / final_stats.file_count as f64
+        "{} bbox utilization: {:.2}%",
+        label,
+        100.0 * st.utilisation_sum / st.file_count as f64
     );
+}
 
+fn print_shape_measures(st: &Stats, multi: bool) {
     println!("\n{}", "Shape measures:".bold());
-    let mean_eigs: Vec<f64> = final_stats
+    let label = if multi { "Dataset mean" } else { "File" };
+    let mean_eigs: Vec<f64> = st
         .pca_eigen_sum
         .iter()
-        .map(|v| v / final_stats.file_count as f64)
+        .map(|&v| v / st.file_count as f64)
         .collect();
-    // normalize by min value for easier reading
-    let min_eig = mean_eigs.iter().copied().reduce(f64::min).unwrap_or(0.0);
+    let min_eig = mean_eigs.iter().copied().fold(f64::INFINITY, f64::min);
+
     println!(
-        "{} PCA eigenvalues ({}:{}:{}): [{}:{}:{}]",
-        aggregate_method,
-        "λ₁".red(),
-        "λ₂".green(),
-        "λ₃".blue(),
-        (mean_eigs[0] / min_eig).round().to_string().red(),
-        (mean_eigs[1] / min_eig).round().to_string().green(),
-        (mean_eigs[2] / min_eig).round().to_string().blue(),
+        "{} PCA eigenvalues (λ₁:λ₂:λ₃): [{:.0}:{:.0}:{:.0}]",
+        label,
+        mean_eigs[0] / min_eig,
+        mean_eigs[1] / min_eig,
+        mean_eigs[2] / min_eig
     );
+    // Descriptive examples (could be extracted/configured separately):
     println!(
         " - {}:{}:{}: Urban mobile strip. Street very long; cross-street details moderate; vertical noise small.",
-        "100".red(), "10".green(), "1".blue(),
+        "100".red(),
+        "10".green(),
+        "1".blue(),
     );
     println!(
-        " - {}:{}:{}: Building facede. Flat wall, little depth",
+        " - {}:{}:{}: Building façade. Flat wall, little depth",
         "100".red(),
         "1".green(),
         "0.1".blue()
@@ -319,126 +335,133 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
         "1".green(),
         "1".blue()
     );
+}
 
-    let overall_mean_density = final_stats.density_sum / final_stats.file_count as f64;
+fn print_density_and_origin(st: &Stats, multi: bool) {
+    let label = if multi { "Dataset mean" } else { "File" };
+    let mean_density = st.density_sum / st.file_count as f64;
     println!(
-        "{} density (Voxel method): {:.3} points / m³",
-        aggregate_method, overall_mean_density
+        "{} density (Voxel method): {:.3} points / m³",
+        label, mean_density
     );
+    let (x, y, z) = st.overall_mean_position();
+    println!("{} origo: [x: {:.3}, y: {:.3}, z: {:.3}]\n", label, x, y, z);
+}
 
-    let (x, y, z) = final_stats.overall_mean_position();
-    println!(
-        "{} origo: [x: {:.3}, y: {:.3}, z: {:.3}]\n",
-        aggregate_method, x, y, z
-    );
+fn print_frame_alignment(st: &Stats, multi: bool) {
+    if !multi {
+        return;
+    }
+    println!("{}", "Frame alignment measures:".bold());
+    if let Some(rms) = rms_spread(&st.extents, &st.centroids) {
+        print_rms_spread(rms);
+    }
+    if !st.extents.is_empty() {
+        print_scale_outliers(&st.extents, &st.file_names);
+    }
+}
 
-    if is_multiple_files {
-        println!("{}", "Frame alignment measures:".bold());
-        if let Some(rms_spread_metric) = rms_spread(&final_stats.extents, &final_stats.centroids) {
-            println!("1. Translation outlier test (RMS spread):");
-            match rms_spread_metric {
-                0.0..0.1 => {
+fn print_rms_spread(rms: f64) {
+    println!("1. Translation outlier test (RMS spread):");
+    match rms {
+        r if r <= 0.1 => {
+            println!(
+                " - [{}] [{:.3}] <= 0.1. All clouds likely have aligned origin.",
+                "OK".green(),
+                rms
+            );
+        }
+        r if r <= 0.5 => {
+            println!(
+                " - [{}] 0.1 < [{:.3}] <= 0.5. RMS Spread borderline unusual. Consider visually checking for misaligned origins / coordinate systems.",
+                "BORDERLINE".yellow(),
+                rms
+            );
+        }
+        _ => {
+            println!(
+                " - [{}] [{:.3}] > 0.5. Frames probably differ in their origins.",
+                "WARNING".red(),
+                rms
+            );
+        }
+    }
+}
+
+fn print_scale_outliers(extents: &Vec<(f64, f64, f64)>, file_names: &Vec<String>) {
+    println!("2. Scale outlier test (Modified z-score outlier test, 'Iglewicz-Hoaglin method'):");
+    let outliers = scale_outliers(extents);
+    if outliers.is_empty() {
+        println!("[{}] All files pass the scale test.", "OK".green());
+    } else {
+        for (&z, name) in outliers
+            .iter()
+            .zip(file_names)
+            .sorted_by_key(|(_, name)| name.as_str())
+        {
+            match z {
+                z if z < 3.5 => { /* not an outlier */ }
+                z if z < 7.0 => {
                     println!(
-                        " - [{}] [{:.3}] <= 0.1. All clouds likely have aligned origin.",
-                        "OK".green(),
-                        rms_spread_metric
-                    );
-                }
-                0.1..0.5 => {
-                    println!(
-                        " - [{}] 0.1 < [{:.3}] <= 0.5. RMS Spread borderline unusual. Consider visually checking for misaligned origins / coordinate systems.",
+                        " - [{}] File {}: 3.5 <= [{:.3}] < 7.0. Possible scale outlier.",
                         "BORDERLINE".yellow(),
-                        rms_spread_metric
+                        name,
+                        z
                     );
                 }
                 _ => {
                     println!(
-                        " - [{}] [{:.3}] > 0.5. Frames probably differ in their origins.",
+                        " - [{}] File {}: [{:.3}] >= 7.0. Likely scale outlier.",
                         "WARNING".red(),
-                        rms_spread_metric
+                        name,
+                        z
                     );
                 }
             }
         }
-        if final_stats.extents.len() > 0 {
-            println!(
-                "2. Scale outlier test (Modified z-score outlier test, 'Iglewicz-Hoaglin method'):"
-            );
-            let outliers = scale_outliers(&final_stats.extents);
-            if outliers.is_empty() {
-                println!("[{}] All files pass the scale test.", "OK".green())
-            } else {
-                for (modified_z_score, file_name) in outliers
-                    .iter()
-                    .zip(final_stats.file_names)
-                    .sorted_by_key(|items| items.1.clone())
-                {
-                    match *modified_z_score {
-                        0.0..3.5 => {}
-                        3.5..7.0 => {
-                            println!(
-                                " - [{}] File {}: 3.5 <= [{:.3}] < 7.0. Possible scale outlier.",
-                                "BORDERLINE".yellow(),
-                                file_name,
-                                modified_z_score
-                            );
-                        }
-                        _ => {
-                            println!(
-                                " - [{}] File {}: [{:.3}] >= 7.0. Likely scale outlier.",
-                                "WARNING".red(),
-                                file_name,
-                                modified_z_score
-                            );
-                        }
-                    }
-                }
-            }
-        }
     }
+}
 
-    // --- optional blocks ---------------------------------------------------
-    if !final_stats.classification_counts.is_empty() {
-        println!("\n{}", "Class distribution".bold());
-        for (class, count) in final_stats
-            .classification_counts
-            .iter()
-            .sorted_by_key(|x| x.0)
-        {
-            let pct = (*count as f64 / final_stats.total_points as f64) * 100.0;
-            println!(" - Class {}: {} points ({:.2} %)", class, count, pct);
-        }
+fn print_class_distribution(st: &Stats) {
+    if st.classification_counts.is_empty() {
+        return;
     }
-
-    Ok(())
+    println!("\n{}", "Class distribution".bold());
+    for (c, &count) in st.classification_counts.iter().sorted_by_key(|x| x.0) {
+        let pct = count as f64 / st.total_points as f64 * 100.0;
+        println!(" - Class {}: {} points ({:.2}%)", c, count, pct);
+    }
 }
 
 /// Gather pointcloud paths (.las/.laz/.pcd).
 fn gather_pointcloud_paths(input: &str, recursive: bool) -> Result<Vec<String>> {
     let mut paths = Vec::new();
+    let input_path = Path::new(input);
 
-    let input_path = Path::new(&input);
     if input_path.is_file() {
-        let input_extension = &extension(&input);
-        if is_supported_extension(input_extension) {
-            paths.push(input_path.to_string_lossy().to_string());
+        let ext = extension(input);
+        if is_supported_extension(&ext) {
+            paths.push(input.to_string());
         }
     } else if input_path.is_dir() {
         if recursive {
-            for entry in WalkDir::new(input_path).into_iter().filter_map(|e| e.ok()) {
+            for entry in WalkDir::new(input_path).into_iter().filter_map(Result::ok) {
                 if entry.file_type().is_file() {
-                    let p = entry.path();
-                    if is_supported_extension(&extension(&p.to_str().unwrap())) {
-                        paths.push(p.to_string_lossy().to_string());
+                    let p = entry.path().to_string_lossy().to_string();
+                    if is_supported_extension(&extension(&p)) {
+                        paths.push(p);
                     }
                 }
             }
         } else {
             for entry in std::fs::read_dir(input_path)? {
-                let entry = entry?;
-                let p = entry.path();
-                if p.is_file() && is_supported_extension(&extension(&p.to_str().unwrap())) {
-                    paths.push(p.to_string_lossy().to_string());
+                let e = entry?;
+                let p = e.path();
+                if p.is_file() {
+                    let ps = p.to_string_lossy().to_string();
+                    if is_supported_extension(&extension(&ps)) {
+                        paths.push(ps);
+                    }
                 }
             }
         }
