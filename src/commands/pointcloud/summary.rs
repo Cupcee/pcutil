@@ -10,6 +10,7 @@ use walkdir::WalkDir;
 use crate::commands::pointcloud::pointcloud_utils::{
     extension, is_supported_extension, read_pointcloud_file_to_buffer, PointcloudSummary,
 };
+use crate::shared::barplot::Barplot;
 use crate::shared::histogram::Histogram;
 use crate::shared::math::{rms_spread, scale_outliers};
 use crate::shared::progressbar::get_progress_bar;
@@ -180,7 +181,7 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
         .fold(
             || (Stats::with_capacity(per_thread_capacity), 0usize),
             |(mut st, mut fails), path| {
-                match read_pointcloud_file_to_buffer(path, args.factor, args.pcd_dyn_fields.clone())
+                match read_pointcloud_file_to_buffer(path, args.factor, args.dynamic_fields.clone())
                 {
                     Ok(buf) => match PointcloudSummary::from(path.clone(), &buf) {
                         Ok(summary) => st.update(summary),
@@ -337,14 +338,14 @@ fn print_density_and_origin(st: &Stats, multi: bool) {
         label, mean_density
     );
     let (x, y, z) = st.overall_mean_position();
-    println!("{} origo: [x: {:.3}, y: {:.3}, z: {:.3}]\n", label, x, y, z);
+    println!("{} origo: [x: {:.3}, y: {:.3}, z: {:.3}]", label, x, y, z);
 }
 
 fn print_frame_alignment(st: &Stats, multi: bool) {
     if !multi {
         return;
     }
-    println!("{}", "Frame alignment measures:".bold());
+    println!("\n{}", "Frame alignment measures:".bold());
     if let Some(rms) = rms_spread(&st.extents, &st.centroids) {
         print_rms_spread(rms);
     }
@@ -419,10 +420,9 @@ fn print_class_distribution(st: &Stats) {
         return;
     }
     println!("\n{}", "Class distribution".bold());
-    for (c, &count) in st.classification_counts.iter().sorted_by_key(|x| x.0) {
-        let pct = count as f64 / st.total_points as f64 * 100.0;
-        println!(" - Class {}: {} points ({:.2}%)", c, count, pct);
-    }
+    let class_map = st.classification_counts.clone();
+    let plot = Barplot::new(class_map);
+    println!("{}", plot);
 }
 
 /// Gather pointcloud paths (.las/.laz/.pcd).

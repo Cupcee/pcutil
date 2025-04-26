@@ -18,7 +18,7 @@ pub fn execute(args: PointcloudConvertArgs) -> Result<()> {
         bail!("Unsupported output format: {}", output_ext);
     }
 
-    let buffer = read_pointcloud_file_to_buffer(&args.input, args.factor, args.pcd_dyn_fields)?;
+    let buffer = read_pointcloud_file_to_buffer(&args.input, args.factor, args.dynamic_fields)?;
 
     // Currently only supports writing LAS/LAZ output
     if output_ext == "las" || output_ext == "laz" {

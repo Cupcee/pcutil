@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use bytemuck;
 use pasture_core::layout::attributes;
-use pasture_core::layout::{PointAttributeDefinition, PointLayout};
+use pasture_core::layout::PointLayout;
 use pasture_core::nalgebra::{Matrix3, SymmetricEigen, Vector3};
 use pasture_core::{
     containers::BorrowedBuffer, containers::BorrowedBufferExt, containers::BorrowedMutBuffer,
@@ -230,7 +230,7 @@ pub fn is_supported_extension(ext: &str) -> bool {
 pub fn read_pointcloud_file_to_buffer(
     path: &str,
     factor: f64,
-    pcd_dyn_fields: Vec<DynFieldType>,
+    dynamic_fields: Vec<DynFieldType>,
 ) -> Result<VectorBuffer> {
     let ext = Path::new(path)
         .extension()
@@ -241,7 +241,7 @@ pub fn read_pointcloud_file_to_buffer(
             let buffer = read_all::<VectorBuffer, _>(path)?;
             Ok(buffer)
         }
-        "pcd" => read_dyn_pcd_file(path, factor, pcd_dyn_fields),
+        "pcd" => read_dyn_pcd_file(path, factor, dynamic_fields),
         _ => bail!("Unsupported format: {}", path),
     }
 }
@@ -251,7 +251,7 @@ pub fn read_pointcloud_file_to_buffer(
 pub fn read_dyn_pcd_file(
     path: &str,
     factor: f64,
-    pcd_dyn_fields: Vec<DynFieldType>,
+    dynamic_fields: Vec<DynFieldType>,
 ) -> Result<VectorBuffer> {
     let reader = DynReader::open(path)?;
     let points = reader.collect::<Result<Vec<_>, _>>()?;
@@ -264,12 +264,13 @@ pub fn read_dyn_pcd_file(
         attributes::POSITION_3D,
         pasture_core::layout::FieldAlignment::Default,
     );
-    for field in &pcd_dyn_fields {
+    for field in &dynamic_fields {
         match field {
             DynFieldType::Classification => layout.add_attribute(
                 attributes::CLASSIFICATION,
                 pasture_core::layout::FieldAlignment::Default,
             ),
+            DynFieldType::Skip => {}
         }
     }
 
@@ -283,23 +284,22 @@ pub fn read_dyn_pcd_file(
         .unwrap()
         .attribute_definition()
         .clone();
-    let mut class_attr: Option<PointAttributeDefinition> = None;
-    for field in &pcd_dyn_fields {
-        match field {
-            DynFieldType::Classification => {
-                class_attr = Some(
-                    buffer
-                        .point_layout()
-                        .get_attribute(&attributes::CLASSIFICATION)
-                        .unwrap()
-                        .attribute_definition()
-                        .clone(),
-                )
-            }
-        }
-    }
+    let attrs: Vec<_> = dynamic_fields
+        .iter()
+        .map(|field| match field {
+            DynFieldType::Classification => Some(
+                buffer
+                    .point_layout()
+                    .get_attribute(&attributes::CLASSIFICATION)
+                    .unwrap()
+                    .attribute_definition()
+                    .clone(),
+            ),
+            DynFieldType::Skip => None,
+        })
+        .collect();
 
-    let n_dyn_fields = pcd_dyn_fields.len();
+    let n_dyn_fields = dynamic_fields.len();
     for (i, p) in points.into_iter().enumerate() {
         let xyz: [f32; 3] = p.to_xyz().context("Unable to find xyz in PCD schema.")?;
         let pos_data = [
@@ -308,10 +308,11 @@ pub fn read_dyn_pcd_file(
             xyz[2] as f64 * factor,
         ];
         let other_fields = &p.0[3..];
-        if n_dyn_fields > 0 && other_fields.len() != n_dyn_fields {
+        let other_fields_count = other_fields.len();
+        if n_dyn_fields > 0 && other_fields_count != n_dyn_fields {
             bail!(
                 "Expected there to be {} dynamic fields in PCD file {}, but found {}",
-                pcd_dyn_fields.len(),
+                dynamic_fields.len(),
                 path,
                 other_fields.len()
             )
@@ -321,20 +322,15 @@ pub fn read_dyn_pcd_file(
             buffer.set_attribute(&pos_attr, i, bytemuck::cast_slice(&pos_data));
         }
 
-        for (dyn_field, field) in pcd_dyn_fields.iter().zip(other_fields.iter()) {
+        for (dyn_field, field) in attrs.iter().zip(other_fields) {
             match dyn_field {
-                DynFieldType::Classification => {
+                Some(attr_def) => {
                     let data = [field
                         .to_value::<u8>()
                         .context("Was unable to parse classification field as u8!")?];
-                    unsafe {
-                        buffer.set_attribute(
-                            class_attr.as_ref().unwrap(),
-                            i,
-                            bytemuck::cast_slice(&data),
-                        )
-                    }
+                    unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
                 }
+                None => {}
             }
         }
     }

@@ -5,19 +5,34 @@ pub mod shared;
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum DynFieldType {
+    #[value(alias("cls"), hide = false)]
+    #[value(alias("class"), hide = false)]
+    #[value(alias("label"), hide = false)]
     Classification,
+    Skip,
 }
 
 #[derive(Debug, Args)]
 pub struct PointcloudSummaryArgs {
-    /// Input file or directory
-    ///
     /// Supported pointcloud formats: [LAS, LAZ, PCD]
     #[arg(required = true)]
     pub input: String,
 
-    #[clap(long, value_enum, num_args = 0..)]
-    pub pcd_dyn_fields: Vec<DynFieldType>,
+    /// These should be passed in same order as the fields
+    /// have in the input file, and we expect that first dynamic
+    /// field comes after fields XYZ (4th field in data).
+    /// E.g. if we have PCD file with fields x, y, z, class
+    /// you may pass `-d label`.
+    ///
+    /// - `classification`: Classification field on the input data.
+    /// Allows extracting additional information related to classes.
+    /// If the input data for this field is not U8, reading the
+    /// file fails (but program does not panic).
+    /// Has aliases cls, class, label, classification.
+    ///
+    /// - `skip`: Skips reading the dynamic field at its position. Useful for unsupported fields.
+    #[clap(short, long, value_enum, num_args = 0..)]
+    pub dynamic_fields: Vec<DynFieldType>,
 
     #[clap(short, long, default_value = "1.0")]
     pub factor: f64,
@@ -29,13 +44,9 @@ pub struct PointcloudSummaryArgs {
 
 #[derive(Debug, Args)]
 pub struct PointcloudConvertArgs {
-    /// Input pointcloud file
-    ///
     /// Supported pointcloud formats: [PCD]
     #[arg(required = true)]
     pub input: String,
-    /// Output pointcloud file
-    ///
     /// Supported pointcloud formats: [LAS, LAZ]
     #[arg(required = true)]
     pub output: String,
@@ -43,8 +54,21 @@ pub struct PointcloudConvertArgs {
     #[clap(short, long, default_value = "1.0")]
     pub factor: f64,
 
-    #[clap(long, value_enum, num_args = 0..)]
-    pub pcd_dyn_fields: Vec<DynFieldType>,
+    /// These should be passed in same order as the fields
+    /// have in the input file, and we expect that first dynamic
+    /// field comes after fields XYZ (4th field in data).
+    /// E.g. if we have PCD file with fields x, y, z, class
+    /// you may pass `-d class`.
+    ///
+    /// - `classification`: Classification field on the input data.
+    /// Allows extracting additional information related to classes.
+    /// If the input data for this field is not U8, reading the
+    /// file fails (but program does not panic).
+    /// Has aliases cls, class, label, classification.
+    ///
+    /// - `skip`: Skips reading the dynamic field at its position. Useful for unsupported fields.
+    #[clap(short, long, value_enum, num_args = 0..)]
+    pub dynamic_fields: Vec<DynFieldType>,
 }
 
 // Error handling utility that can be used by both lib and binary

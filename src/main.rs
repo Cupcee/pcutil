@@ -3,7 +3,7 @@ use pcutil::{PointcloudConvertArgs, PointcloudSummaryArgs};
 
 /// Rust implementation of bash commands
 #[derive(Debug, Parser)]
-#[clap(name = "pcutil", version, author, about)]
+#[clap(name = "pcutil", version, author, about, infer_subcommands = true)]
 pub struct RootArgs {
     #[clap(subcommand)]
     command: PointcloudCommand,
