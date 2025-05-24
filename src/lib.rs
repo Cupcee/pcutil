@@ -15,8 +15,8 @@ pub enum DynFieldType {
 #[derive(Debug, Args)]
 pub struct PointcloudSummaryArgs {
     /// Supported pointcloud formats: [LAS, LAZ, PCD]
-    #[arg(required = true)]
-    pub input: String,
+    #[arg(required = true, value_delimiter = ' ', num_args = 1..)]
+    pub input: Vec<String>,
 
     /// These should be passed in same order as the fields
     /// have in the input file, and we expect that first dynamic
@@ -30,7 +30,8 @@ pub struct PointcloudSummaryArgs {
     /// file fails (but program does not panic).
     /// Has aliases cls, class, label, classification.
     ///
-    /// - `skip`: Skips reading the dynamic field at its position. Useful for unsupported fields.
+    /// - `skip`: Skips reading the dynamic field at its position. Can be used to read columns that are
+    /// unsupported by the tool.
     #[clap(short, long, value_enum, num_args = 0..)]
     pub dynamic_fields: Vec<DynFieldType>,
 

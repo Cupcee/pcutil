@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use colored::Colorize;
 use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
@@ -161,8 +161,17 @@ impl Stats {
 
 /// Main entry point
 pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
-    let paths = gather_pointcloud_paths(&args.input, args.recursive)?;
-    ensure_nonempty(&paths, &args.input)?;
+    let input_concat = args.input.join(" ");
+    let paths = args
+        .input
+        .iter()
+        .try_fold(Vec::new(), |mut acc, path| -> Result<Vec<String>> {
+            let mut p = gather_pointcloud_paths(path.as_str(), args.recursive)
+                .with_context(|| format!("gathering pointclouds from {}", path))?;
+            acc.append(&mut p);
+            Ok(acc)
+        })?;
+    ensure_nonempty(&paths, &input_concat)?;
 
     // Determine per-thread capacity
     let num_threads = rayon::current_num_threads();
@@ -202,7 +211,7 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
             },
         );
 
-    print_header(&args.input, &paths, read_failures);
+    print_header(&input_concat, &paths, read_failures);
     let is_multi = paths.len() > 1;
 
     let hist = final_stats.calculate_point_count_histogram();
@@ -217,7 +226,7 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
     Ok(())
 }
 
-fn ensure_nonempty(paths: &[String], input: &str) -> Result<()> {
+fn ensure_nonempty(paths: &Vec<String>, input: &String) -> Result<()> {
     if paths.is_empty() {
         eprintln!("No pointcloud files found at '{}'", input);
         Err(anyhow::anyhow!("no files found"))?
@@ -225,7 +234,7 @@ fn ensure_nonempty(paths: &[String], input: &str) -> Result<()> {
     Ok(())
 }
 
-fn print_header(input: &str, paths: &[String], failed: usize) {
+fn print_header(input: &String, paths: &Vec<String>, failed: usize) {
     let multi = paths.len() > 1;
     let uniq_exts = paths
         .iter()
