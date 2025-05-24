@@ -138,16 +138,12 @@ impl Stats {
         self.file_count += other.file_count;
     }
 
-    fn calculate_point_count_histogram(&self) -> Option<Histogram> {
-        if self.file_point_counts.len() > 1 {
-            let mut hist = Histogram::with_buckets(10);
-            for &count in &self.file_point_counts {
-                hist.add(count as u64);
-            }
-            Some(hist)
-        } else {
-            None
+    fn calculate_point_count_histogram(&self) -> Histogram {
+        let mut hist = Histogram::with_buckets(10);
+        for &count in &self.file_point_counts {
+            hist.add(count as u64);
         }
+        hist
     }
 
     fn overall_mean_position(&self) -> (f64, f64, f64) {
@@ -209,9 +205,8 @@ pub fn execute(args: PointcloudSummaryArgs) -> Result<()> {
     print_header(&args.input, &paths, read_failures);
     let is_multi = paths.len() > 1;
 
-    if let Some(hist) = final_stats.calculate_point_count_histogram() {
-        print_histogram(&hist);
-    }
+    let hist = final_stats.calculate_point_count_histogram();
+    print_histogram(&hist);
     print_bounding_box(&final_stats);
     print_volumes(&final_stats, is_multi);
     print_shape_measures(&final_stats, is_multi);
