@@ -74,33 +74,6 @@ pub struct PointcloudConvertArgs {
     pub dynamic_fields: Vec<DynFieldType>,
 }
 
-#[derive(Debug, Args)]
-pub struct PointcloudViewArgs {
-    /// Supported pointcloud formats: [LAS, LAZ, PCD]
-    #[arg(required = true)]
-    pub input: PathBuf,
-
-    /// These should be passed in same order as the fields
-    /// have in the input file, and we expect that first dynamic
-    /// field comes after fields XYZ (4th field in data).
-    /// E.g. if we have PCD file with fields x, y, z, class
-    /// you may pass `-d label`.
-    ///
-    /// - `classification`: Classification field on the input data.
-    /// Allows extracting additional information related to classes.
-    /// If the input data for this field is not U8, reading the
-    /// file fails (but program does not panic).
-    /// Has aliases cls, class, label, classification.
-    ///
-    /// - `skip`: Skips reading the dynamic field at its position. Can be used to read columns that are
-    /// unsupported by the tool.
-    #[clap(short, long, value_enum, num_args = 0..)]
-    pub dynamic_fields: Vec<DynFieldType>,
-
-    #[clap(short, long, default_value = "1.0")]
-    pub factor: f64,
-}
-
 // Error handling utility that can be used by both lib and binary
 pub fn handle_error(e: anyhow::Error) {
     eprintln!("Error!");

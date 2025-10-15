@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use pcutil::{PointcloudConvertArgs, PointcloudSummaryArgs, PointcloudViewArgs};
+use pcutil::{PointcloudConvertArgs, PointcloudSummaryArgs};
 
 /// Rust implementation of bash commands
 #[derive(Debug, Parser)]
@@ -15,8 +15,6 @@ enum PointcloudCommand {
     Summary(PointcloudSummaryArgs),
     /// Convert pointcloud file from one format to another.
     Convert(PointcloudConvertArgs),
-    /// View pointcloud file in given path
-    View(PointcloudViewArgs),
 }
 
 fn main() {
@@ -25,7 +23,6 @@ fn main() {
     let result = match args.command {
         PointcloudCommand::Summary(args) => pcutil::commands::pointcloud::summary::execute(args),
         PointcloudCommand::Convert(args) => pcutil::commands::pointcloud::convert::execute(args),
-        PointcloudCommand::View(args) => pcutil::commands::pointcloud::view::execute(args),
     };
 
     if let Err(e) = result {
