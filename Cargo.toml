@@ -23,6 +23,10 @@ rand = { version = "0.9.1", features = ["small_rng"] }
 qhull = "0.3.0"
 termimad = "0.31.3"
 colored = "3.0.0"
+rerun = "0.24.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_yaml = "0.9.34"
+dirs = "6.0.0"
 
 [dev-dependencies]
 uuid = { version = "1.0", features = ["v4"] }

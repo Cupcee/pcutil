@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use clap::Args;
 
 pub mod commands;
@@ -46,6 +44,16 @@ pub struct PointcloudSummaryArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct PointcloudVisualizationArgs {
+    #[arg(required = true)]
+    pub input: String,
+    #[clap(short, long, default_value_t = 1.0)]
+    pub factor: f64,
+    #[clap(short, long)]
+    pub dynamic_fields: Vec<DynFieldType>,
+}
+
+#[derive(Debug, Args)]
 pub struct PointcloudConvertArgs {
     /// Supported pointcloud formats: [PCD]
     #[arg(required = true)]
@@ -54,6 +62,7 @@ pub struct PointcloudConvertArgs {
     #[arg(required = true)]
     pub output: String,
 
+    /// Scales XYZ coordinates on load by this factor (factor x XYZ).
     #[clap(short, long, default_value = "1.0")]
     pub factor: f64,
 

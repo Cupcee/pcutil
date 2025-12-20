@@ -42,7 +42,7 @@ impl Histogram {
     }
 
     /// Get an iterator over this histogram's buckets.
-    pub fn buckets(&self) -> Buckets {
+    pub fn buckets(&self) -> Buckets<'_> {
         Buckets {
             histogram: self,
             index: 0,
