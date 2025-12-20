@@ -35,6 +35,7 @@ pub struct PointcloudSummaryArgs {
     #[clap(short, long, value_enum, num_args = 0..)]
     pub dynamic_fields: Vec<DynFieldType>,
 
+    /// Scales XYZ coordinates on load by this factor (factor x XYZ).
     #[clap(short, long, default_value = "1.0")]
     pub factor: f64,
 
@@ -47,6 +48,7 @@ pub struct PointcloudSummaryArgs {
 pub struct PointcloudVisualizationArgs {
     #[arg(required = true)]
     pub input: String,
+    /// Scales XYZ coordinates on load by this factor (factor x XYZ).
     #[clap(short, long, default_value_t = 1.0)]
     pub factor: f64,
     #[clap(short, long)]
