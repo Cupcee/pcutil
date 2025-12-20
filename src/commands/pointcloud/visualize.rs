@@ -74,7 +74,7 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
         .collect();
 
     // Build Points and add Classifications
-    let mut rerun_points = Points3D::new(points).with_radii([0.02]);
+    let mut rerun_points = Points3D::new(points).with_radii([0.05]);
 
     if buffer
         .point_layout()
