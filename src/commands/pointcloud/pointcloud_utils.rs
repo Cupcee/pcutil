@@ -7,7 +7,7 @@ use pasture_core::{
     containers::BorrowedBuffer, containers::BorrowedBufferExt, containers::BorrowedMutBuffer,
     containers::OwningBuffer, containers::VectorBuffer,
 };
-use rerun::datatypes;
+use pcd_rs::Field;
 
 use crate::shared::math::{hull_volume_area, sample_for_hull};
 use crate::DynFieldType;
@@ -247,6 +247,23 @@ pub fn read_pointcloud_file_to_buffer(
     }
 }
 
+/// Takes a dynamic field value, and attempts to read it as: u8 > u16 > i32.
+/// Then attemps to fit the value into u8 and return the value.
+/// Raises error, if the value does not fit into u8.
+fn dyn_field_as_u8(field: &Field) -> Result<u8> {
+    // Try direct u8 first, then fall back to float -> u8.
+    let cls: u8 = if let Some(v) = field.to_value::<u8>() {
+        v
+    } else if let Some(vu) = field.to_value::<u16>() {
+        u8::try_from(vu).context("classification u16 doesn't fit in u8")?
+    } else if let Some(vi) = field.to_value::<i32>() {
+        u8::try_from(vi).context("classification i32 doesn't fit in u8")?
+    } else {
+        bail!("Unsupported type for classification; expected u8/u16/i32-compatible")
+    };
+    Ok(cls)
+}
+
 /// Read a .pcd file without schema into a VectorBuffer with POSITION_3D.
 /// Bails if unable to read the file.
 pub fn read_dyn_pcd_file(
@@ -337,59 +354,19 @@ pub fn read_dyn_pcd_file(
 
         for (dyn_field, field) in attrs.iter().zip(other_fields) {
             match dyn_field {
-                Some(attr_def) => {
-                    match attr_def {
-                        def if *def == attributes::CLASSIFICATION => {
-                            // Try direct u8 first, then fall back to float -> u8.
-                            let cls: u8 = if let Some(v) = field.to_value::<u8>() {
-                                v
-                            } else if let Some(vf) = field.to_value::<f32>() {
-                                // Clamp to [0, 255] and round before casting
-                                vf.round().clamp(0.0, 255.0) as u8
-                            } else if let Some(vd) = field.to_value::<f64>() {
-                                vd.round().clamp(0.0, 255.0) as u8
-                            } else if let Some(vi) = field.to_value::<i32>() {
-                                u8::try_from(vi).context("classification i32 doesn't fit in u8")?
-                            } else if let Some(vu) = field.to_value::<u16>() {
-                                u8::try_from(vu).context("classification u16 doesn't fit in u8")?
-                            } else {
-                                bail!(
-                            "Unsupported type for classification; expected u8/f32/f64-compatible"
-                        );
-                            };
-
-                            let data = [cls];
-                            unsafe {
-                                buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data))
-                            }
-                        }
-                        def if *def == attributes::POINT_SOURCE_ID => {
-                            // Try direct u8 first, then fall back to float -> u8.
-                            let source_id: u8 = if let Some(v) = field.to_value::<u8>() {
-                                v
-                            } else if let Some(vf) = field.to_value::<f32>() {
-                                // Clamp to [0, 255] and round before casting
-                                vf.round().clamp(0.0, 255.0) as u8
-                            } else if let Some(vd) = field.to_value::<f64>() {
-                                vd.round().clamp(0.0, 255.0) as u8
-                            } else if let Some(vi) = field.to_value::<i32>() {
-                                u8::try_from(vi).context("classification i32 doesn't fit in u8")?
-                            } else if let Some(vu) = field.to_value::<u16>() {
-                                u8::try_from(vu).context("classification u16 doesn't fit in u8")?
-                            } else {
-                                bail!(
-                            "Unsupported type for classification; expected u8/f32/f64-compatible"
-                        );
-                            };
-
-                            let data = [source_id as u16];
-                            unsafe {
-                                buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data))
-                            }
-                        }
-                        _ => {}
+                Some(attr_def) => match attr_def {
+                    def if *def == attributes::CLASSIFICATION => {
+                        let cls = dyn_field_as_u8(field)?;
+                        let data = [cls];
+                        unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
                     }
-                }
+                    def if *def == attributes::POINT_SOURCE_ID => {
+                        let source_id = dyn_field_as_u8(field)?;
+                        let data = [source_id as u16];
+                        unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
+                    }
+                    _ => {}
+                },
                 None => {}
             }
         }

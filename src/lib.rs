@@ -5,22 +5,27 @@ pub mod shared;
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum DynFieldType {
+    #[value(alias("c"), hide = false)]
     #[value(alias("cls"), hide = false)]
     #[value(alias("class"), hide = false)]
     #[value(alias("label"), hide = false)]
     Classification,
+    #[value(alias("sid"), hide = false)]
     #[value(alias("sensor_id"), hide = false)]
     #[value(alias("source_id"), hide = false)]
     SourceID,
+    #[value(alias("s"), hide = false)]
     Skip,
 }
 
 #[derive(clap::ValueEnum, Clone, Debug)]
 pub enum LabelField {
+    #[value(alias("c"), hide = false)]
     #[value(alias("cls"), hide = false)]
     #[value(alias("class"), hide = false)]
     #[value(alias("label"), hide = false)]
     Classification,
+    #[value(alias("sid"), hide = false)]
     #[value(alias("sensor_id"), hide = false)]
     #[value(alias("source_id"), hide = false)]
     SourceID,
@@ -35,7 +40,7 @@ pub struct PointcloudSummaryArgs {
     /// These should be passed in same order as the fields
     /// have in the input file, and we expect that first dynamic
     /// field comes after fields XYZ (4th field in data).
-    /// E.g. if we have PCD file with fields x, y, z, class
+    /// E.g. if we have PCD file with fields `x, y, z, class`
     /// you may pass `-d label`.
     ///
     /// - `classification`: Classification field on the input data.
@@ -74,7 +79,7 @@ pub struct PointcloudVisualizationArgs {
     /// These should be passed in same order as the fields
     /// have in the input file, and we expect that first dynamic
     /// field comes after fields XYZ (4th field in data).
-    /// E.g. if we have PCD file with fields x, y, z, class
+    /// E.g. if we have PCD file with fields `x, y, z, class`
     /// you may pass `-d class`.
     ///
     /// - `classification`: Classification field on the input data.
@@ -89,6 +94,9 @@ pub struct PointcloudVisualizationArgs {
     #[clap(short, long, value_enum, num_args = 0..)]
     pub dynamic_fields: Vec<DynFieldType>,
 
+    /// This field indicates which of the captured (not skipped) `dynamic_fields`
+    /// is used as the `class_ids` field of the visualized pointcloud on Rerun.
+    /// It defaults to the dynamic field of type `classification`.
     #[clap(short, long, value_enum, default_value = "class")]
     pub label_field: LabelField,
 }
@@ -109,7 +117,7 @@ pub struct PointcloudConvertArgs {
     /// These should be passed in same order as the fields
     /// have in the input file, and we expect that first dynamic
     /// field comes after fields XYZ (4th field in data).
-    /// E.g. if we have PCD file with fields x, y, z, class
+    /// E.g. if we have PCD file with fields `x, y, z, class`
     /// you may pass `-d label`.
     ///
     /// - `classification`: Classification field on the input data.
