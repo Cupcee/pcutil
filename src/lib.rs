@@ -76,6 +76,9 @@ pub struct PointcloudVisualizationArgs {
     /// Visualized point radius (in pointcloud units). Defaults to 0.05.
     #[clap(short, long, default_value_t = 0.05)]
     pub radii: f32,
+    /// Downsapling voxel size, in data coordinate units. Defaults to 0.05.
+    #[clap(short, long, default_value_t = 0.05)]
+    pub voxel_size: f32,
     /// These should be passed in same order as the fields
     /// have in the input file, and we expect that first dynamic
     /// field comes after fields XYZ (4th field in data).
