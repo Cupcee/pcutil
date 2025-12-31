@@ -9,7 +9,21 @@ pub enum DynFieldType {
     #[value(alias("class"), hide = false)]
     #[value(alias("label"), hide = false)]
     Classification,
+    #[value(alias("sensor_id"), hide = false)]
+    #[value(alias("source_id"), hide = false)]
+    SourceID,
     Skip,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug)]
+pub enum LabelField {
+    #[value(alias("cls"), hide = false)]
+    #[value(alias("class"), hide = false)]
+    #[value(alias("label"), hide = false)]
+    Classification,
+    #[value(alias("sensor_id"), hide = false)]
+    #[value(alias("source_id"), hide = false)]
+    SourceID,
 }
 
 #[derive(Debug, Args)]
@@ -54,6 +68,9 @@ pub struct PointcloudVisualizationArgs {
     /// Scales XYZ coordinates on load by this factor (factor x XYZ).
     #[clap(short, long, default_value_t = 1.0)]
     pub factor: f64,
+    /// Visualized point radius (in pointcloud units). Defaults to 0.05.
+    #[clap(short, long, default_value_t = 0.05)]
+    pub radii: f32,
     /// These should be passed in same order as the fields
     /// have in the input file, and we expect that first dynamic
     /// field comes after fields XYZ (4th field in data).
@@ -71,6 +88,9 @@ pub struct PointcloudVisualizationArgs {
     /// - `skip`: Skips reading the dynamic field at its position. Useful for unsupported fields.
     #[clap(short, long, value_enum, num_args = 0..)]
     pub dynamic_fields: Vec<DynFieldType>,
+
+    #[clap(short, long, value_enum, default_value = "class")]
+    pub label_field: LabelField,
 }
 
 #[derive(Debug, Args)]

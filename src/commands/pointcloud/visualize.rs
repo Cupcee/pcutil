@@ -9,15 +9,16 @@ use std::collections::BTreeMap;
 use std::fs;
 
 use crate::commands::pointcloud::pointcloud_utils::read_pointcloud_file_to_buffer;
-use crate::PointcloudVisualizationArgs;
+use crate::{LabelField, PointcloudVisualizationArgs};
 
 #[derive(Debug, Deserialize)]
 struct Config {
     classmap: BTreeMap<u16, (String, [u8; 3])>,
+    sensormap: BTreeMap<u16, (String, [u8; 3])>,
 }
 
 /// Loads the class map from .pcutil.yaml or returns a fallback.
-fn load_annotation_context() -> AnnotationContext {
+fn load_annotation_context(label_field: &LabelField) -> AnnotationContext {
     let mut config_path = std::env::current_dir().ok().map(|p| p.join(".pcutil.yaml"));
 
     // Check home dir if not in current
@@ -30,12 +31,25 @@ fn load_annotation_context() -> AnnotationContext {
     if let Some(path) = config_path.filter(|p| p.exists()) {
         if let Ok(content) = fs::read_to_string(&path) {
             if let Ok(config) = serde_yaml::from_str::<Config>(&content) {
-                for (id, (label, color)) in config.classmap {
-                    info_list.push(AnnotationInfo {
-                        id,
-                        label: Some(label.into()),
-                        color: Some(Rgba32::from_rgb(color[0], color[1], color[2])),
-                    });
+                match label_field {
+                    LabelField::Classification => {
+                        for (id, (label, color)) in config.classmap {
+                            info_list.push(AnnotationInfo {
+                                id,
+                                label: Some(label.into()),
+                                color: Some(Rgba32::from_rgb(color[0], color[1], color[2])),
+                            });
+                        }
+                    }
+                    LabelField::SourceID => {
+                        for (id, (label, color)) in config.sensormap {
+                            info_list.push(AnnotationInfo {
+                                id,
+                                label: Some(label.into()),
+                                color: Some(Rgba32::from_rgb(color[0], color[1], color[2])),
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -60,7 +74,7 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
         .context("Failed to spawn Rerun viewer")?;
 
     //  Log the Annotation Context (Class Map)
-    rec.log_static("/", &load_annotation_context())?;
+    rec.log_static("/", &load_annotation_context(&args.label_field))?;
 
     //  Load Data
     let path = args.input;
@@ -74,11 +88,12 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
         .collect();
 
     // Build Points and add Classifications
-    let mut rerun_points = Points3D::new(points).with_radii([0.05]);
+    let mut rerun_points = Points3D::new(points).with_radii([args.radii]);
 
     if buffer
         .point_layout()
         .has_attribute(&attributes::CLASSIFICATION)
+        && matches!(args.label_field, LabelField::Classification)
     {
         let class_ids: Vec<ClassId> = buffer
             .view_attribute::<u8>(&attributes::CLASSIFICATION)
@@ -86,6 +101,19 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
             .map(|c| ClassId::from(c as u16))
             .collect();
         rerun_points = rerun_points.with_class_ids(class_ids);
+    }
+
+    if buffer
+        .point_layout()
+        .has_attribute(&attributes::POINT_SOURCE_ID)
+        && matches!(args.label_field, LabelField::SourceID)
+    {
+        let source_ids: Vec<ClassId> = buffer
+            .view_attribute::<u16>(&attributes::POINT_SOURCE_ID)
+            .into_iter()
+            .map(|c| ClassId::from(c))
+            .collect();
+        rerun_points = rerun_points.with_class_ids(source_ids);
     }
 
     let entity_name = std::path::Path::new(&path)
