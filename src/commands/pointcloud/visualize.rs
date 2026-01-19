@@ -3,7 +3,9 @@ use dirs;
 use pasture_core::containers::{BorrowedBuffer, BorrowedBufferExt};
 use pasture_core::layout::attributes;
 use pasture_core::nalgebra::Vector3;
-use rerun::{components::ClassId, AnnotationContext, AnnotationInfo, Points3D, Rgba32};
+use rerun::{
+    components::ClassId, AnnotationContext, AnnotationInfo, Points3D, Rgba32, TextDocument,
+};
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -81,10 +83,16 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
     let mut paths = gather_pointcloud_paths(&args.input)?;
     paths.sort();
 
-    for path in paths {
-        let buffer =
-            read_pointcloud_file_to_buffer(&path, args.factor, args.dynamic_fields.clone())?;
+    // Loop with index to establish a timeline
+    for (frame_idx, path) in paths.iter().enumerate() {
+        // 1. Set the time sequence
+        // This links all data in this loop iteration to a specific frame on the timeline.
+        rec.set_time_sequence("frame_idx", frame_idx as i64);
 
+        let buffer =
+            read_pointcloud_file_to_buffer(path, args.factor, args.dynamic_fields.clone())?;
+
+        // --- Standard Point Processing ---
         // 1. Load Raw Positions
         let pos_view = buffer.view_attribute::<Vector3<f64>>(&attributes::POSITION_3D);
         let raw_points: Vec<[f32; 3]> = pos_view
@@ -92,8 +100,7 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
             .map(|p| [p.x as f32, p.y as f32, p.z as f32])
             .collect();
 
-        // 2. Voxelization: Calculate indices to keep
-        // We use a HashSet to track occupied voxels.
+        // 2. Voxelization
         let indices_to_keep: Vec<usize> = if args.voxel_size > 0.0 {
             let mut keep = Vec::with_capacity(raw_points.len());
             let mut seen_voxels = HashSet::new();
@@ -104,7 +111,6 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
                     (p[1] / args.voxel_size).floor() as i64,
                     (p[2] / args.voxel_size).floor() as i64,
                 ];
-                // Only keep the point if we haven't seen this voxel key yet
                 if seen_voxels.insert(key) {
                     keep.push(i);
                 }
@@ -114,25 +120,23 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
             (0..raw_points.len()).collect()
         };
 
-        // 3. Filter Points using the indices
+        // 3. Filter Points
         let filtered_points: Vec<[f32; 3]> =
             indices_to_keep.iter().map(|&i| raw_points[i]).collect();
 
-        let mut rerun_points = Points3D::new(filtered_points).with_radii([args.radii]);
+        let mut rerun_points = Points3D::new(filtered_points.clone()).with_radii([args.radii]);
 
-        // 4. Filter and Attach Attributes (Classification)
+        // 4. Attributes (Classification)
         if buffer
             .point_layout()
             .has_attribute(&attributes::CLASSIFICATION)
             && matches!(args.label_field, LabelField::Classification)
         {
-            // Collect all raw classes first
             let raw_classes: Vec<u8> = buffer
                 .view_attribute::<u8>(&attributes::CLASSIFICATION)
                 .into_iter()
                 .collect();
 
-            // Filter using the same indices to ensure alignment
             let class_ids: Vec<ClassId> = indices_to_keep
                 .iter()
                 .map(|&i| ClassId::from(raw_classes[i] as u16))
@@ -141,7 +145,7 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
             rerun_points = rerun_points.with_class_ids(class_ids);
         }
 
-        // 5. Filter and Attach Attributes (Source ID)
+        // 5. Attributes (Source ID)
         if buffer
             .point_layout()
             .has_attribute(&attributes::POINT_SOURCE_ID)
@@ -160,22 +164,38 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
             rerun_points = rerun_points.with_class_ids(source_ids);
         }
 
-        // Log the entity
-        let _path = std::path::Path::new(&path);
-        let parent = _path.parent();
-        match parent {
-            Some(parent) => {
-                let suffix = parent.to_string_lossy().to_string();
-                rec.log(format!("pcutil/points3d/{}", suffix), &rerun_points)?;
-            }
-            None => {
-                let suffix = if _path.is_dir() {
-                    "cwd"
-                } else {
-                    _path.file_name().unwrap().to_str().unwrap()
-                };
-                rec.log(format!("pcutil/points3d/{}", suffix), &rerun_points)?;
-            }
+        // --- Logging Logic ---
+
+        // A. Define a constant Entity Path.
+        // We do NOT include the filename here. Keeping this string constant allows
+        // Rerun to treat this as a single object changing over time (animation).
+        let cloud_entity_path = "pcutil/points3d/cloud";
+
+        // Log the main point cloud
+        rec.log(cloud_entity_path, &rerun_points)?;
+
+        // B. Log the Filename
+        if !filtered_points.is_empty() {
+            let file_name = std::path::Path::new(path)
+                .file_name()
+                .and_then(|f| f.to_str())
+                .unwrap_or("unknown");
+
+            // Calculate Centroid of the cloud to position the label
+            // let sum: [f32; 3] = filtered_points.iter().fold([0.0, 0.0, 0.0], |acc, p| {
+            //     [acc[0] + p[0], acc[1] + p[1], acc[2] + p[2]]
+            // });
+            // let count = filtered_points.len() as f32;
+            let pos = [0.0, 0.0, 0.0];
+
+            // Log an invisible point (radius 0) at the center, carrying the filename label.
+            // We log this to a sub-path (`/label`) so it is grouped with the cloud.
+            rec.log(
+                format!("{}/label", cloud_entity_path),
+                &Points3D::new([pos])
+                    .with_radii([0.0]) // Invisible point
+                    .with_labels([file_name]), // The text label
+            )?;
         }
     }
 
