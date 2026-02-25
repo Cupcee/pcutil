@@ -2,6 +2,12 @@
 
 Various operations for transforming and exploring pointcloud data.
 
+## Prerequisites
+
+- `rustc` (tested with version `1.90.0`)
+- `Cargo` (tested with version `1.90.0`)
+- Rerun-CLI (for `visualize`, see below for how to install this with Cargo)
+
 ## Installation
 
 Installation to path can be done with Cargo:
@@ -24,29 +30,22 @@ Then, place a YAML file like:
 # Pointcloud Utility Configuration
 # This file maps classification IDs to [Label, [R, G, B]]
 classmap:
-  0: ["Ground", [44, 57, 54]]
-  1: ["Cable", [225, 111, 6]]
+  0: ["Ground", [120, 40, 120]]
+  1: ["Person", [200, 160, 29]]
   2: ["Box", [185, 131, 44]]
-  3: ["Rock", [231, 205, 232]]
-  4: ["Pile", [151, 243, 194]]
-  5: ["Barricade", [244, 199, 13]]
-  6: ["Person", [255, 91, 219]]
-  7: ["Vehicle", [38, 23, 180]]
-  8: ["Pole", [208, 138, 11]]
-  9: ["Hole", [182, 37, 231]]
-  10: ["Sign", [88, 237, 6]]
-  11: ["Building", [55, 151, 131]]
-  12: ["Container", [130, 28, 79]]
-  13: ["TanksAndSilos", [206, 191, 98]]
-  14: ["Tree", [39, 150, 54]]
-  15: ["Pipe", [200, 160, 29]]
-  16: ["Fence", [243, 136, 95]]
-  17: ["Other", [237, 126, 132]]
-  18: ["Cliff", [170, 25, 34]]
+  # ... more
+sensormap:
+  0: ["Front", [255, 0, 0]]
+  1: ["Left", [0, 255, 0]]
+  # ... more
+
 ```
 
 to your home directory as `$HOME/.pcutil.yaml`. This config
 assigns class labels and colors to each point by its class index.
+
+Sensormap alternatively maps the points according to sensor ID,
+if this data is available.
 
 ## Usage
 
@@ -132,9 +131,11 @@ Options:
 
           - `classification`: Classification field on the input data. Allows extracting additional information related to classes. Expects the classification field to be uint8, i.e. defined between 0-255. If the input data for this field is not U8, the field is attempted to be cast to U8. Has aliases cls, class, label, classification.
 
+          - `sensor_id`: Sensor ID field in the input data. This allows visualizing which point belongs to which sensor, in a multi-sensor configuration. See sensormap in the configuration file for coloring options. Has aliases sid, sensor_id, source_id.
+
           - `skip`: Skips reading the dynamic field at its position. Useful for unsupported fields.
 
-          [possible values: classification, skip]
+          [possible values: classification, sensor_id, skip]
 
   -h, --help
           Print help (see a summary with '-h')
