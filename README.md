@@ -12,7 +12,7 @@ support is untested.
 - `rustc` (tested with version `1.90.0`)
 - `Cargo` (tested with version `1.90.0`)
 - Rerun-CLI (for `visualize`, see below for how to install this with Cargo)
-- `cargo-binstall`, for installing Rerun
+- (Optional: `cargo-binstall`, for installing Rerun)
 
 ## Installation
 
@@ -24,8 +24,10 @@ cargo install --path .
 
 This installs the binary to path to alias `pcutil`.
 
-To use `visualize`, install also the Rerun-cli. First,
-install `cargo-binstall` if it is missing:
+To use `visualize`, install also the Rerun-cli. Either install
+`rerun-cli` with some method of your own, or follow below method:
+
+First, install `cargo-binstall` if it is missing:
 
 ```sh
 # linux / macOS:
