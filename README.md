@@ -2,11 +2,17 @@
 
 Various operations for transforming and exploring pointcloud data.
 
+## Caveats
+
+This tool has been tested to work with MacOS and Ubuntu 24.04 LTS. Windows
+support is untested.
+
 ## Prerequisites
 
 - `rustc` (tested with version `1.90.0`)
 - `Cargo` (tested with version `1.90.0`)
 - Rerun-CLI (for `visualize`, see below for how to install this with Cargo)
+- `cargo-binstall`, for installing Rerun
 
 ## Installation
 
@@ -18,7 +24,17 @@ cargo install --path .
 
 This installs the binary to path to alias `pcutil`.
 
-To use `visualize`, install also the Rerun-cli:
+To use `visualize`, install also the Rerun-cli. First,
+install `cargo-binstall` if it is missing:
+
+```sh
+# linux / macOS:
+curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+# windows:
+Set-ExecutionPolicy Unrestricted -Scope Process; iex (iwr "https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.ps1").Content
+```
+
+Then install `rerun-cli`:
 
 ```sh
 cargo binstall --force rerun-cli@0.24.1`.
