@@ -39,7 +39,7 @@ Set-ExecutionPolicy Unrestricted -Scope Process; iex (iwr "https://raw.githubuse
 Then install `rerun-cli`:
 
 ```sh
-cargo binstall --force rerun-cli@0.24.1`.
+cargo binstall --force rerun-cli@0.24.1
 ```
 
 Then, place a YAML file like:
@@ -69,6 +69,25 @@ if this data is available.
 
 Currently tools are: `summary`, `visualize`, `convert`.
 
+### PCD Field Auto-detection
+
+For PCD files, `pcutil` attempts to automatically detect and map fields following the first three (XYZ) to standard point cloud attributes based on their names in the PCD header (case-insensitive). This removes the need to manually specify `-d` or `--dynamic-fields` for standard files.
+
+The following mappings are supported:
+
+| PCD Field Name | Mapped Attribute |
+| :--- | :--- |
+| `intensity` | Intensity |
+| `rgb`, `rgba` | Color (supports packed U32/F32) |
+| `label`, `classification` | Classification |
+| `gps_time`, `timestamp` | GPS Time |
+| `user_data` | User Data |
+| `point_source_id` | Point Source ID |
+| `return_number` | Return Number |
+| `number_of_returns` | Number of Returns |
+
+If a field name is not recognized, it is automatically skipped. You can still use the `-d` flag to manually define the mapping or to skip specific fields by position, which will override the auto-detection logic.
+
 ### Summary
 
 Summary gives aggregated information from a single or a directory of pointcloud
@@ -81,17 +100,21 @@ Usage: pcutil summary [OPTIONS] <INPUT>...
 
 Arguments:
   <INPUT>...
-          Supported pointcloud formats: [LAS, LAZ, PCD]
+          Supported pointcloud formats: [LAS, LAZ, PCD, PLY]
 
 Options:
   -d, --dynamic-fields [<DYNAMIC_FIELDS>...]
-          These should be passed in same order as the fields have in the input file, and we expect that first dynamic field comes after fields XYZ (4th field in data). E.g. if we have PCD file with fields x, y, z, class you may pass `-d label`.
+          These should be passed in same order as the fields have in the input file. For PCD files, standard fields (intensity, rgb, label, etc.) are automatically detected if this flag is omitted.
 
-          - `classification`: Classification field on the input data. Allows extracting additional information related to classes. Expects the classification field to be uint8, i.e. defined between 0-255. If the input data for this field is not U8, the field is attempted to be cast to U8. Has aliases cls, class, label, classification.
-
-          - `skip`: Skips reading the dynamic field at its position. Can be used to read columns that are unsupported by the tool.
-
-          [possible values: classification, skip]
+          - `classification`: Classification field. (aliases: c, cls, class, label)
+          - `source_id`: Sensor/Source ID field. (aliases: sid, sensor_id, source_id)
+          - `intensity`: Intensity field. (aliases: i, int)
+          - `color`: RGB color field. (aliases: rgb, color)
+          - `gps_time`: GPS timestamp field. (aliases: t, time, gps)
+          - `user_data`: User data field. (aliases: u, user)
+          - `return_number`: Return number field. (alias: rn)
+          - `number_of_returns`: Total number of returns. (alias: nor)
+          - `skip`: Skips reading the dynamic field at its position. (alias: s)
 
   -f, --factor <FACTOR>
           Scales XYZ coordinates on load by this factor (factor x XYZ)
@@ -108,7 +131,10 @@ Options:
 Examples:
 
 ```sh
-# If we have a PCD file with fields `x, y, z, class_idx`, we can do:
+# PCD files auto-detect standard fields, so usually you don't need -d:
+pcutil summary path/to/file.pcd
+
+# If you have non-standard fields or want to override auto-detection:
 pcutil summary path/to/file.pcd -d class
 
 # Commonly, a pointcloud format file has also other header data that is unimportant.
@@ -136,7 +162,7 @@ Usage: pcutil visualize [OPTIONS] <INPUT>
 
 Arguments:
   <INPUT>
-          Path to input file, either [PCD, LAS, LAZ]
+          Path to input file, either [PCD, LAS, LAZ, PLY]
 
 Options:
   -f, --factor <FACTOR>
@@ -145,15 +171,17 @@ Options:
           [default: 1]
 
   -d, --dynamic-fields [<DYNAMIC_FIELDS>...]
-          These should be passed in same order as the fields have in the input file, and we expect that first dynamic field comes after fields XYZ (4th field in data). E.g. if we have PCD file with fields x, y, z, class you may pass `-d class`.
+          These should be passed in same order as the fields have in the input file. For PCD files, standard fields (intensity, rgb, label, etc.) are automatically detected if this flag is omitted.
 
-          - `classification`: Classification field on the input data. Allows extracting additional information related to classes. Expects the classification field to be uint8, i.e. defined between 0-255. If the input data for this field is not U8, the field is attempted to be cast to U8. Has aliases cls, class, label, classification.
-
-          - `sensor_id`: Sensor ID field in the input data. This allows visualizing which point belongs to which sensor, in a multi-sensor configuration. See sensormap in the configuration file for coloring options. Has aliases sid, sensor_id, source_id.
-
-          - `skip`: Skips reading the dynamic field at its position. Useful for unsupported fields.
-
-          [possible values: classification, sensor_id, skip]
+          - `classification`: Classification field. (aliases: c, cls, class, label)
+          - `source_id`: Sensor/Source ID field. (aliases: sid, sensor_id, source_id)
+          - `intensity`: Intensity field. (aliases: i, int)
+          - `color`: RGB color field. (aliases: rgb, color)
+          - `gps_time`: GPS timestamp field. (aliases: t, time, gps)
+          - `user_data`: User data field. (aliases: u, user)
+          - `return_number`: Return number field. (alias: rn)
+          - `number_of_returns`: Total number of returns. (alias: nor)
+          - `skip`: Skips reading the dynamic field at its position. (alias: s)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -161,8 +189,7 @@ Options:
 
 ### Convert
 
-Convert pointcloud from one format to another. Currently, only `pcd` -> `las` / `laz`
-is supported.
+Convert pointcloud from one format to another. Supported formats include `pcd`, `las`, `laz`, and `ply`.
 
 ```sh
 Convert pointcloud file from one format to another
@@ -171,10 +198,10 @@ Usage: pcutil convert [OPTIONS] <INPUT> <OUTPUT>
 
 Arguments:
   <INPUT>
-          Supported pointcloud formats: [PCD]
+          Supported pointcloud formats: [PCD, LAS, LAZ, PLY]
 
   <OUTPUT>
-          Supported pointcloud formats: [LAS, LAZ]
+          Supported pointcloud formats: [PCD, LAS, LAZ, PLY]
 
 Options:
   -f, --factor <FACTOR>
@@ -183,13 +210,17 @@ Options:
           [default: 1.0]
 
   -d, --dynamic-fields [<DYNAMIC_FIELDS>...]
-          These should be passed in same order as the fields have in the input file, and we expect that first dynamic field comes after fields XYZ (4th field in data). E.g. if we have PCD file with fields x, y, z, class you may pass `-d label`.
+          These should be passed in same order as the fields have in the input file. For PCD files, standard fields (intensity, rgb, label, etc.) are automatically detected if this flag is omitted.
 
-          - `classification`: Classification field on the input data. Allows extracting additional information related to classes. Expects the classification field to be uint8, i.e. defined between 0-255. If the input data for this field is not U8, the field is attempted to be cast to U8. Has aliases cls, class, label, classification.
-
-          - `skip`: Skips reading the dynamic field at its position. Can be used to read columns that are unsupported by the tool.
-
-          [possible values: classification, skip]
+          - `classification`: Classification field. (aliases: c, cls, class, label)
+          - `source_id`: Sensor/Source ID field. (aliases: sid, sensor_id, source_id)
+          - `intensity`: Intensity field. (aliases: i, int)
+          - `color`: RGB color field. (aliases: rgb, color)
+          - `gps_time`: GPS timestamp field. (aliases: t, time, gps)
+          - `user_data`: User data field. (aliases: u, user)
+          - `return_number`: Return number field. (alias: rn)
+          - `number_of_returns`: Total number of returns. (alias: nor)
+          - `skip`: Skips reading the dynamic field at its position. (alias: s)
 
   -h, --help
           Print help (see a summary with '-h')
@@ -199,5 +230,12 @@ Examples:
 
 ```sh
 # assuming file.pcd has headers x, y, z, class_idx_field
-pcutil convert path/to/file.pcd path/to/file.laz -d class
+# Standard fields like classification are auto-detected from PCD.
+pcutil convert path/to/file.pcd path/to/file.laz
+
+# Convert PCD to PLY, auto-detecting all fields
+pcutil convert path/to/file.pcd path/to/file.ply
+
+# Convert PLY to PCD (standard attributes like intensity, rgb are preserved)
+pcutil convert path/to/file.ply path/to/file.pcd
 ```

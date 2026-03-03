@@ -5623,6 +5623,7 @@ dependencies = [
  "pasture-core",
  "pasture-io",
  "pcd-rs",
+ "ply-rs",
  "qhull",
  "rand 0.9.1",
  "rayon",

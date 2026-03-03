@@ -4,7 +4,7 @@ use pasture_core::containers::{BorrowedBuffer, BorrowedBufferExt};
 use pasture_core::layout::attributes;
 use pasture_core::nalgebra::Vector3;
 use rerun::{
-    components::ClassId, AnnotationContext, AnnotationInfo, Points3D, Rgba32, TextDocument,
+    components::ClassId, AnnotationContext, AnnotationInfo, Points3D, Rgba32,
 };
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};

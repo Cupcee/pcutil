@@ -14,6 +14,23 @@ pub enum DynFieldType {
     #[value(alias("sensor_id"), hide = false)]
     #[value(alias("source_id"), hide = false)]
     SourceID,
+    #[value(alias("i"), hide = false)]
+    #[value(alias("int"), hide = false)]
+    Intensity,
+    #[value(alias("rgb"), hide = false)]
+    #[value(alias("color"), hide = false)]
+    Color,
+    #[value(alias("t"), hide = false)]
+    #[value(alias("time"), hide = false)]
+    #[value(alias("gps"), hide = false)]
+    GpsTime,
+    #[value(alias("u"), hide = false)]
+    #[value(alias("user"), hide = false)]
+    UserData,
+    #[value(alias("rn"), hide = false)]
+    ReturnNumber,
+    #[value(alias("nor"), hide = false)]
+    NumberOfReturns,
     #[value(alias("s"), hide = false)]
     Skip,
 }
@@ -33,7 +50,7 @@ pub enum LabelField {
 
 #[derive(Debug, Args)]
 pub struct PointcloudSummaryArgs {
-    /// Supported pointcloud formats: [LAS, LAZ, PCD]
+    /// Supported pointcloud formats: [LAS, LAZ, PCD, PLY]
     #[arg(required = true, value_delimiter = ' ', num_args = 1..)]
     pub input: Vec<String>,
 
@@ -68,7 +85,7 @@ pub struct PointcloudSummaryArgs {
 #[derive(Debug, Args)]
 pub struct PointcloudVisualizationArgs {
     #[arg(required = true)]
-    /// Path to input file, either [PCD, LAS, LAZ].
+    /// Path to input file, either [PCD, LAS, LAZ, PLY].
     pub input: String,
     /// Scales XYZ coordinates on load by this factor (factor x XYZ).
     #[clap(short, long, default_value_t = 1.0)]
@@ -106,10 +123,10 @@ pub struct PointcloudVisualizationArgs {
 
 #[derive(Debug, Args)]
 pub struct PointcloudConvertArgs {
-    /// Supported pointcloud formats: [PCD]
+    /// Supported pointcloud formats: [PCD, LAS, LAZ, PLY]
     #[arg(required = true)]
     pub input: String,
-    /// Supported pointcloud formats: [LAS, LAZ]
+    /// Supported pointcloud formats: [PCD, LAS, LAZ, PLY]
     #[arg(required = true)]
     pub output: String,
 

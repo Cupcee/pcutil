@@ -7,13 +7,16 @@ use pasture_core::{
     containers::BorrowedBuffer, containers::BorrowedBufferExt, containers::BorrowedMutBuffer,
     containers::OwningBuffer, containers::VectorBuffer,
 };
-use pcd_rs::Field;
+use pcd_rs::{DataKind, DynRecord, Field, Schema, ValueKind, WriterInit};
+use ply_rs::ply::{Addable, Property, PropertyType, ScalarType};
 
 use crate::shared::math::{hull_volume_area, sample_for_hull};
 use crate::DynFieldType;
 use pasture_io::base::read_all;
 use pcd_rs::DynReader;
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
 use std::path::Path;
 
 /// Struct to hold the summary of a point cloud file.
@@ -224,10 +227,10 @@ pub fn extension(path: &str) -> String {
 
 /// Returns true if the provided extension is supported.
 pub fn is_supported_extension(ext: &str) -> bool {
-    matches!(ext, "las" | "laz" | "pcd")
+    matches!(ext, "las" | "laz" | "pcd" | "ply")
 }
 
-/// Read a single pointcloud file (.las/.laz or .pcd) into a VectorBuffer.
+/// Read a single pointcloud file (.las/.laz, .pcd or .ply) into a VectorBuffer.
 pub fn read_pointcloud_file_to_buffer(
     path: &str,
     factor: f64,
@@ -243,6 +246,7 @@ pub fn read_pointcloud_file_to_buffer(
             Ok(buffer)
         }
         "pcd" => read_dyn_pcd_file(path, factor, dynamic_fields),
+        "ply" => read_ply_file(path, factor),
         _ => bail!("Unsupported format: {}", path),
     }
 }
@@ -252,16 +256,43 @@ pub fn read_pointcloud_file_to_buffer(
 /// Raises error, if the value does not fit into u8.
 fn dyn_field_as_u8(field: &Field) -> Result<u8> {
     // Try direct u8 first, then fall back to float -> u8.
-    let cls: u8 = if let Some(v) = field.to_value::<u8>() {
-        v
+    if let Some(v) = field.to_value::<u8>() {
+        Ok(v)
     } else if let Some(vu) = field.to_value::<u16>() {
-        u8::try_from(vu).context("classification u16 doesn't fit in u8")?
+        Ok(u8::try_from(vu).context("field u16 doesn't fit in u8")?)
     } else if let Some(vi) = field.to_value::<i32>() {
-        u8::try_from(vi).context("classification i32 doesn't fit in u8")?
+        Ok(u8::try_from(vi).context("field i32 doesn't fit in u8")?)
+    } else if let Some(vf) = field.to_value::<f32>() {
+        Ok(vf as u8)
     } else {
-        bail!("Unsupported type for classification; expected u8/u16/i32-compatible")
-    };
-    Ok(cls)
+        bail!("Unsupported type for u8-compatible field")
+    }
+}
+
+fn dyn_field_as_u16(field: &Field) -> Result<u16> {
+    if let Some(v) = field.to_value::<u16>() {
+        Ok(v)
+    } else if let Some(vu) = field.to_value::<u32>() {
+        Ok(u16::try_from(vu).context("field u32 doesn't fit in u16")?)
+    } else if let Some(vi) = field.to_value::<i32>() {
+        Ok(u16::try_from(vi).context("field i32 doesn't fit in u16")?)
+    } else if let Some(vf) = field.to_value::<f32>() {
+        Ok(vf as u16)
+    } else {
+        bail!("Unsupported type for u16-compatible field")
+    }
+}
+
+fn dyn_field_as_f64(field: &Field) -> Result<f64> {
+    if let Some(v) = field.to_value::<f64>() {
+        Ok(v)
+    } else if let Some(vf) = field.to_value::<f32>() {
+        Ok(vf as f64)
+    } else if let Some(vi) = field.to_value::<i32>() {
+        Ok(vi as f64)
+    } else {
+        bail!("Unsupported type for f64-compatible field")
+    }
 }
 
 /// Read a .pcd file without schema into a VectorBuffer with POSITION_3D.
@@ -269,9 +300,27 @@ fn dyn_field_as_u8(field: &Field) -> Result<u8> {
 pub fn read_dyn_pcd_file(
     path: &str,
     factor: f64,
-    dynamic_fields: Vec<DynFieldType>,
+    mut dynamic_fields: Vec<DynFieldType>,
 ) -> Result<VectorBuffer> {
     let reader = DynReader::open(path)?;
+    
+    // Auto-detect standard fields if dynamic_fields is empty
+    if dynamic_fields.is_empty() {
+        for field_def in reader.meta().field_defs.fields.iter().skip(3) {
+            match field_def.name.to_lowercase().as_str() {
+                "intensity" => dynamic_fields.push(DynFieldType::Intensity),
+                "rgb" | "rgba" => dynamic_fields.push(DynFieldType::Color),
+                "label" | "classification" => dynamic_fields.push(DynFieldType::Classification),
+                "gps_time" | "timestamp" => dynamic_fields.push(DynFieldType::GpsTime),
+                "user_data" => dynamic_fields.push(DynFieldType::UserData),
+                "point_source_id" => dynamic_fields.push(DynFieldType::SourceID),
+                "return_number" => dynamic_fields.push(DynFieldType::ReturnNumber),
+                "number_of_returns" => dynamic_fields.push(DynFieldType::NumberOfReturns),
+                _ => dynamic_fields.push(DynFieldType::Skip),
+            }
+        }
+    }
+
     let points = reader.collect::<Result<Vec<_>, _>>()?;
     if points.is_empty() {
         bail!("No points found in the PCD file {}", path);
@@ -290,6 +339,30 @@ pub fn read_dyn_pcd_file(
             ),
             DynFieldType::SourceID => layout.add_attribute(
                 attributes::POINT_SOURCE_ID,
+                pasture_core::layout::FieldAlignment::Default,
+            ),
+            DynFieldType::Intensity => layout.add_attribute(
+                attributes::INTENSITY,
+                pasture_core::layout::FieldAlignment::Default,
+            ),
+            DynFieldType::Color => layout.add_attribute(
+                attributes::COLOR_RGB,
+                pasture_core::layout::FieldAlignment::Default,
+            ),
+            DynFieldType::GpsTime => layout.add_attribute(
+                attributes::GPS_TIME,
+                pasture_core::layout::FieldAlignment::Default,
+            ),
+            DynFieldType::UserData => layout.add_attribute(
+                attributes::USER_DATA,
+                pasture_core::layout::FieldAlignment::Default,
+            ),
+            DynFieldType::ReturnNumber => layout.add_attribute(
+                attributes::RETURN_NUMBER,
+                pasture_core::layout::FieldAlignment::Default,
+            ),
+            DynFieldType::NumberOfReturns => layout.add_attribute(
+                attributes::NUMBER_OF_RETURNS,
                 pasture_core::layout::FieldAlignment::Default,
             ),
             DynFieldType::Skip => {}
@@ -321,6 +394,54 @@ pub fn read_dyn_pcd_file(
                 buffer
                     .point_layout()
                     .get_attribute(&attributes::POINT_SOURCE_ID)
+                    .unwrap()
+                    .attribute_definition()
+                    .clone(),
+            ),
+            DynFieldType::Intensity => Some(
+                buffer
+                    .point_layout()
+                    .get_attribute(&attributes::INTENSITY)
+                    .unwrap()
+                    .attribute_definition()
+                    .clone(),
+            ),
+            DynFieldType::Color => Some(
+                buffer
+                    .point_layout()
+                    .get_attribute(&attributes::COLOR_RGB)
+                    .unwrap()
+                    .attribute_definition()
+                    .clone(),
+            ),
+            DynFieldType::GpsTime => Some(
+                buffer
+                    .point_layout()
+                    .get_attribute(&attributes::GPS_TIME)
+                    .unwrap()
+                    .attribute_definition()
+                    .clone(),
+            ),
+            DynFieldType::UserData => Some(
+                buffer
+                    .point_layout()
+                    .get_attribute(&attributes::USER_DATA)
+                    .unwrap()
+                    .attribute_definition()
+                    .clone(),
+            ),
+            DynFieldType::ReturnNumber => Some(
+                buffer
+                    .point_layout()
+                    .get_attribute(&attributes::RETURN_NUMBER)
+                    .unwrap()
+                    .attribute_definition()
+                    .clone(),
+            ),
+            DynFieldType::NumberOfReturns => Some(
+                buffer
+                    .point_layout()
+                    .get_attribute(&attributes::NUMBER_OF_RETURNS)
                     .unwrap()
                     .attribute_definition()
                     .clone(),
@@ -361,8 +482,51 @@ pub fn read_dyn_pcd_file(
                         unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
                     }
                     def if *def == attributes::POINT_SOURCE_ID => {
-                        let source_id = dyn_field_as_u8(field)?;
-                        let data = [source_id as u16];
+                        let source_id = dyn_field_as_u16(field)?;
+                        let data = [source_id];
+                        unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
+                    }
+                    def if *def == attributes::INTENSITY => {
+                        let intensity = dyn_field_as_u16(field)?;
+                        let data = [intensity];
+                        unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
+                    }
+                    def if *def == attributes::COLOR_RGB => {
+                        // Handle both packed RGB and separate fields if possible?
+                        // For now, assume packed U32 if it's one field.
+                        if let Some(rgb) = field.to_value::<u32>() {
+                            let r = (((rgb >> 16) & 0xFF) as u16) << 8;
+                            let g = (((rgb >> 8) & 0xFF) as u16) << 8;
+                            let b = ((rgb & 0xFF) as u16) << 8;
+                            let data = [r, g, b];
+                            unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
+                        } else if let Some(rgb_f) = field.to_value::<f32>() {
+                            let rgb = rgb_f.to_bits();
+                            let r = (((rgb >> 16) & 0xFF) as u16) << 8;
+                            let g = (((rgb >> 8) & 0xFF) as u16) << 8;
+                            let b = ((rgb & 0xFF) as u16) << 8;
+                            let data = [r, g, b];
+                            unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
+                        }
+                    }
+                    def if *def == attributes::GPS_TIME => {
+                        let gt = dyn_field_as_f64(field)?;
+                        let data = [gt];
+                        unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
+                    }
+                    def if *def == attributes::USER_DATA => {
+                        let ud = dyn_field_as_u8(field)?;
+                        let data = [ud];
+                        unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
+                    }
+                    def if *def == attributes::RETURN_NUMBER => {
+                        let rn = dyn_field_as_u8(field)?;
+                        let data = [rn];
+                        unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
+                    }
+                    def if *def == attributes::NUMBER_OF_RETURNS => {
+                        let nor = dyn_field_as_u8(field)?;
+                        let data = [nor];
                         unsafe { buffer.set_attribute(attr_def, i, bytemuck::cast_slice(&data)) }
                     }
                     _ => {}
@@ -373,4 +537,393 @@ pub fn read_dyn_pcd_file(
     }
 
     Ok(buffer)
+}
+
+fn get_prop_f64(p: &Property) -> f64 {
+    match p {
+        Property::Float(f) => *f as f64,
+        Property::Double(d) => *d,
+        Property::UChar(u) => *u as f64,
+        Property::Char(c) => *c as f64,
+        Property::UShort(u) => *u as f64,
+        Property::Short(s) => *s as f64,
+        Property::UInt(u) => *u as f64,
+        Property::Int(i) => *i as f64,
+        _ => 0.0,
+    }
+}
+
+fn get_prop_u16(p: &Property) -> u16 {
+    match p {
+        Property::UShort(u) => *u,
+        Property::UChar(u) => (*u as u16) * 257,
+        Property::UInt(u) => *u as u16,
+        Property::Int(i) => *i as u16,
+        Property::Float(f) => (*f * 65535.0) as u16,
+        Property::Double(d) => (*d * 65535.0) as u16,
+        _ => 0,
+    }
+}
+
+fn get_prop_u8(p: &Property) -> u8 {
+    match p {
+        Property::UChar(u) => *u,
+        Property::Char(c) => *c as u8,
+        Property::UShort(u) => (*u >> 8) as u8,
+        Property::Short(s) => (*s >> 8) as u8,
+        Property::UInt(u) => *u as u8,
+        Property::Int(i) => *i as u8,
+        _ => 0,
+    }
+}
+
+/// Read a .ply file into a VectorBuffer.
+pub fn read_ply_file(path: &str, factor: f64) -> Result<VectorBuffer> {
+    let mut f = BufReader::new(File::open(path)?);
+    let p = ply_rs::parser::Parser::<ply_rs::ply::DefaultElement>::new();
+    let ply = p.read_ply(&mut f).context("Failed to read PLY file")?;
+
+    let vertices = ply.payload.get("vertex").context("No 'vertex' element in PLY file")?;
+    if vertices.is_empty() {
+        bail!("No points found in the PLY file {}", path);
+    }
+
+    let mut layout = PointLayout::default();
+    let first_v = &vertices[0];
+    
+    if !first_v.contains_key("x") || !first_v.contains_key("y") || !first_v.contains_key("z") {
+        bail!("PLY file must have x, y, and z properties in the 'vertex' element");
+    }
+    
+    layout.add_attribute(attributes::POSITION_3D, pasture_core::layout::FieldAlignment::Default);
+    
+    if first_v.contains_key("red") && first_v.contains_key("green") && first_v.contains_key("blue") {
+        layout.add_attribute(attributes::COLOR_RGB, pasture_core::layout::FieldAlignment::Default);
+    }
+    
+    if first_v.contains_key("intensity") {
+        layout.add_attribute(attributes::INTENSITY, pasture_core::layout::FieldAlignment::Default);
+    }
+    
+    if first_v.contains_key("classification") || first_v.contains_key("scalar_Classification") {
+        layout.add_attribute(attributes::CLASSIFICATION, pasture_core::layout::FieldAlignment::Default);
+    }
+    
+    if first_v.contains_key("user_data") || first_v.contains_key("scalar_UserData") {
+        layout.add_attribute(attributes::USER_DATA, pasture_core::layout::FieldAlignment::Default);
+    }
+    
+    if first_v.contains_key("gps_time") || first_v.contains_key("scalar_GpsTime") {
+        layout.add_attribute(attributes::GPS_TIME, pasture_core::layout::FieldAlignment::Default);
+    }
+
+    if first_v.contains_key("number_of_returns") {
+        layout.add_attribute(attributes::NUMBER_OF_RETURNS, pasture_core::layout::FieldAlignment::Default);
+    }
+    
+    if first_v.contains_key("return_number") {
+        layout.add_attribute(attributes::RETURN_NUMBER, pasture_core::layout::FieldAlignment::Default);
+    }
+
+    if first_v.contains_key("point_source_id") {
+        layout.add_attribute(attributes::POINT_SOURCE_ID, pasture_core::layout::FieldAlignment::Default);
+    }
+
+    let num_points = vertices.len();
+    let mut buffer = VectorBuffer::with_capacity(num_points, layout);
+    buffer.resize(num_points);
+    
+    let layout_copy = buffer.point_layout().clone();
+    
+    for (i, v) in vertices.iter().enumerate() {
+        if let Some(attr) = layout_copy.get_attribute(&attributes::POSITION_3D) {
+            let x = get_prop_f64(v.get("x").unwrap()) * factor;
+            let y = get_prop_f64(v.get("y").unwrap()) * factor;
+            let z = get_prop_f64(v.get("z").unwrap()) * factor;
+            let pos_data = [x, y, z];
+            unsafe { buffer.set_attribute(attr.attribute_definition(), i, bytemuck::cast_slice(&pos_data)) };
+        }
+        
+        if let Some(attr) = layout_copy.get_attribute(&attributes::COLOR_RGB) {
+            let r = get_prop_u16(v.get("red").unwrap());
+            let g = get_prop_u16(v.get("green").unwrap());
+            let b = get_prop_u16(v.get("blue").unwrap());
+            let color_data = [r, g, b];
+            unsafe { buffer.set_attribute(attr.attribute_definition(), i, bytemuck::cast_slice(&color_data)) };
+        }
+        
+        if let Some(attr) = layout_copy.get_attribute(&attributes::INTENSITY) {
+            let intensity = get_prop_u16(v.get("intensity").unwrap());
+            let intensity_data = [intensity];
+            unsafe { buffer.set_attribute(attr.attribute_definition(), i, bytemuck::cast_slice(&intensity_data)) };
+        }
+        
+        if let Some(attr) = layout_copy.get_attribute(&attributes::CLASSIFICATION) {
+            let cls = v.get("classification").or_else(|| v.get("scalar_Classification")).map(get_prop_u8).unwrap_or(0);
+            let cls_data = [cls];
+            unsafe { buffer.set_attribute(attr.attribute_definition(), i, bytemuck::cast_slice(&cls_data)) };
+        }
+        
+        if let Some(attr) = layout_copy.get_attribute(&attributes::USER_DATA) {
+            let ud = v.get("user_data").or_else(|| v.get("scalar_UserData")).map(get_prop_u8).unwrap_or(0);
+            let ud_data = [ud];
+            unsafe { buffer.set_attribute(attr.attribute_definition(), i, bytemuck::cast_slice(&ud_data)) };
+        }
+        
+        if let Some(attr) = layout_copy.get_attribute(&attributes::GPS_TIME) {
+            let gt = v.get("gps_time").or_else(|| v.get("scalar_GpsTime")).map(get_prop_f64).unwrap_or(0.0);
+            let gt_data = [gt];
+            unsafe { buffer.set_attribute(attr.attribute_definition(), i, bytemuck::cast_slice(&gt_data)) };
+        }
+
+        if let Some(attr) = layout_copy.get_attribute(&attributes::POINT_SOURCE_ID) {
+            let sid = get_prop_u16(v.get("point_source_id").unwrap());
+            let sid_data = [sid];
+            unsafe { buffer.set_attribute(attr.attribute_definition(), i, bytemuck::cast_slice(&sid_data)) };
+        }
+
+        if let Some(attr) = layout_copy.get_attribute(&attributes::NUMBER_OF_RETURNS) {
+            let nor = get_prop_u8(v.get("number_of_returns").unwrap());
+            let nor_data = [nor];
+            unsafe { buffer.set_attribute(attr.attribute_definition(), i, bytemuck::cast_slice(&nor_data)) };
+        }
+
+        if let Some(attr) = layout_copy.get_attribute(&attributes::RETURN_NUMBER) {
+            let rn = get_prop_u8(v.get("return_number").unwrap());
+            let rn_data = [rn];
+            unsafe { buffer.set_attribute(attr.attribute_definition(), i, bytemuck::cast_slice(&rn_data)) };
+        }
+    }
+
+    Ok(buffer)
+}
+
+/// Write a VectorBuffer to a .ply file.
+pub fn write_ply_file(buffer: &VectorBuffer, path: &str) -> Result<()> {
+    let mut ply = ply_rs::ply::Ply::<ply_rs::ply::DefaultElement>::new();
+    ply.header.encoding = ply_rs::ply::Encoding::BinaryLittleEndian;
+    
+    let mut vertex_element = ply_rs::ply::ElementDef::new("vertex".to_string());
+    let layout = buffer.point_layout();
+    
+    if layout.has_attribute(&attributes::POSITION_3D) {
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("x".to_string(), PropertyType::Scalar(ScalarType::Double)));
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("y".to_string(), PropertyType::Scalar(ScalarType::Double)));
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("z".to_string(), PropertyType::Scalar(ScalarType::Double)));
+    }
+    
+    if layout.has_attribute(&attributes::COLOR_RGB) {
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("red".to_string(), PropertyType::Scalar(ScalarType::UChar)));
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("green".to_string(), PropertyType::Scalar(ScalarType::UChar)));
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("blue".to_string(), PropertyType::Scalar(ScalarType::UChar)));
+    }
+    
+    if layout.has_attribute(&attributes::INTENSITY) {
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("intensity".to_string(), PropertyType::Scalar(ScalarType::UShort)));
+    }
+    
+    if layout.has_attribute(&attributes::CLASSIFICATION) {
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("classification".to_string(), PropertyType::Scalar(ScalarType::UChar)));
+    }
+    
+    if layout.has_attribute(&attributes::GPS_TIME) {
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("gps_time".to_string(), PropertyType::Scalar(ScalarType::Double)));
+    }
+    
+    if layout.has_attribute(&attributes::POINT_SOURCE_ID) {
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("point_source_id".to_string(), PropertyType::Scalar(ScalarType::UShort)));
+    }
+
+    if layout.has_attribute(&attributes::USER_DATA) {
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("user_data".to_string(), PropertyType::Scalar(ScalarType::UChar)));
+    }
+
+    if layout.has_attribute(&attributes::NUMBER_OF_RETURNS) {
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("number_of_returns".to_string(), PropertyType::Scalar(ScalarType::UChar)));
+    }
+
+    if layout.has_attribute(&attributes::RETURN_NUMBER) {
+        vertex_element.properties.add(ply_rs::ply::PropertyDef::new("return_number".to_string(), PropertyType::Scalar(ScalarType::UChar)));
+    }
+    
+    ply.header.elements.add(vertex_element);
+    
+    let mut vertices = Vec::with_capacity(buffer.len());
+    
+    for i in 0..buffer.len() {
+        let mut element = ply_rs::ply::DefaultElement::new();
+        
+        if layout.has_attribute(&attributes::POSITION_3D) {
+            let pos = buffer.view_attribute::<Vector3<f64>>(&attributes::POSITION_3D).at(i);
+            element.insert("x".to_string(), Property::Double(pos.x));
+            element.insert("y".to_string(), Property::Double(pos.y));
+            element.insert("z".to_string(), Property::Double(pos.z));
+        }
+        
+        if layout.has_attribute(&attributes::COLOR_RGB) {
+            let color = buffer.view_attribute::<Vector3<u16>>(&attributes::COLOR_RGB).at(i);
+            element.insert("red".to_string(), Property::UChar((color.x >> 8) as u8));
+            element.insert("green".to_string(), Property::UChar((color.y >> 8) as u8));
+            element.insert("blue".to_string(), Property::UChar((color.z >> 8) as u8));
+        }
+        
+        if layout.has_attribute(&attributes::INTENSITY) {
+            let intensity = buffer.view_attribute::<u16>(&attributes::INTENSITY).at(i);
+            element.insert("intensity".to_string(), Property::UShort(intensity));
+        }
+        
+        if layout.has_attribute(&attributes::CLASSIFICATION) {
+            let cls = buffer.view_attribute::<u8>(&attributes::CLASSIFICATION).at(i);
+            element.insert("classification".to_string(), Property::UChar(cls));
+        }
+        
+        if layout.has_attribute(&attributes::GPS_TIME) {
+            let gt = buffer.view_attribute::<f64>(&attributes::GPS_TIME).at(i);
+            element.insert("gps_time".to_string(), Property::Double(gt));
+        }
+
+        if layout.has_attribute(&attributes::POINT_SOURCE_ID) {
+            let sid = buffer.view_attribute::<u16>(&attributes::POINT_SOURCE_ID).at(i);
+            element.insert("point_source_id".to_string(), Property::UShort(sid));
+        }
+
+        if layout.has_attribute(&attributes::USER_DATA) {
+            let ud = buffer.view_attribute::<u8>(&attributes::USER_DATA).at(i);
+            element.insert("user_data".to_string(), Property::UChar(ud));
+        }
+
+        if layout.has_attribute(&attributes::NUMBER_OF_RETURNS) {
+            let nor = buffer.view_attribute::<u8>(&attributes::NUMBER_OF_RETURNS).at(i);
+            element.insert("number_of_returns".to_string(), Property::UChar(nor));
+        }
+
+        if layout.has_attribute(&attributes::RETURN_NUMBER) {
+            let rn = buffer.view_attribute::<u8>(&attributes::RETURN_NUMBER).at(i);
+            element.insert("return_number".to_string(), Property::UChar(rn));
+        }
+        
+        vertices.push(element);
+    }
+    
+    ply.payload.insert("vertex".to_string(), vertices);
+    
+    let mut f = BufWriter::new(File::create(path)?);
+    let writer = ply_rs::writer::Writer::new();
+    writer.write_ply(&mut f, &mut ply).context("Failed to write PLY file")?;
+    
+    Ok(())
+}
+
+/// Write a VectorBuffer to a .pcd file.
+pub fn write_pcd_file(buffer: &VectorBuffer, path: &str) -> Result<()> {
+    let layout = buffer.point_layout();
+    let mut schema_fields = Vec::new();
+    
+    if layout.has_attribute(&attributes::POSITION_3D) {
+        schema_fields.push(("x", ValueKind::F32, 1));
+        schema_fields.push(("y", ValueKind::F32, 1));
+        schema_fields.push(("z", ValueKind::F32, 1));
+    }
+    
+    if layout.has_attribute(&attributes::INTENSITY) {
+        schema_fields.push(("intensity", ValueKind::U16, 1));
+    }
+    
+    if layout.has_attribute(&attributes::COLOR_RGB) {
+        schema_fields.push(("rgb", ValueKind::U32, 1));
+    }
+    
+    if layout.has_attribute(&attributes::CLASSIFICATION) {
+        schema_fields.push(("label", ValueKind::U8, 1));
+    }
+
+    if layout.has_attribute(&attributes::GPS_TIME) {
+        schema_fields.push(("gps_time", ValueKind::F64, 1));
+    }
+
+    if layout.has_attribute(&attributes::POINT_SOURCE_ID) {
+        schema_fields.push(("point_source_id", ValueKind::U16, 1));
+    }
+
+    if layout.has_attribute(&attributes::USER_DATA) {
+        schema_fields.push(("user_data", ValueKind::U8, 1));
+    }
+
+    if layout.has_attribute(&attributes::NUMBER_OF_RETURNS) {
+        schema_fields.push(("number_of_returns", ValueKind::U8, 1));
+    }
+
+    if layout.has_attribute(&attributes::RETURN_NUMBER) {
+        schema_fields.push(("return_number", ValueKind::U8, 1));
+    }
+
+    let writer_init = WriterInit {
+        width: buffer.len() as u64,
+        height: 1,
+        viewpoint: Default::default(),
+        data_kind: DataKind::Binary,
+        schema: Some(Schema::from_iter(schema_fields)),
+    };
+    
+    let mut writer = writer_init.create(path).context("Failed to create PCD writer")?;
+    
+    for i in 0..buffer.len() {
+        let mut fields = Vec::new();
+        
+        if layout.has_attribute(&attributes::POSITION_3D) {
+            let pos = buffer.view_attribute::<Vector3<f64>>(&attributes::POSITION_3D).at(i);
+            fields.push(Field::F32(vec![pos.x as f32]));
+            fields.push(Field::F32(vec![pos.y as f32]));
+            fields.push(Field::F32(vec![pos.z as f32]));
+        }
+        
+        if layout.has_attribute(&attributes::INTENSITY) {
+            let intensity = buffer.view_attribute::<u16>(&attributes::INTENSITY).at(i);
+            fields.push(Field::U16(vec![intensity]));
+        }
+        
+        if layout.has_attribute(&attributes::COLOR_RGB) {
+            let color = buffer.view_attribute::<Vector3<u16>>(&attributes::COLOR_RGB).at(i);
+            let r = (color.x >> 8) as u32;
+            let g = (color.y >> 8) as u32;
+            let b = (color.z >> 8) as u32;
+            let rgb = (r << 16) | (g << 8) | b;
+            fields.push(Field::U32(vec![rgb]));
+        }
+        
+        if layout.has_attribute(&attributes::CLASSIFICATION) {
+            let cls = buffer.view_attribute::<u8>(&attributes::CLASSIFICATION).at(i);
+            fields.push(Field::U8(vec![cls]));
+        }
+
+        if layout.has_attribute(&attributes::GPS_TIME) {
+            let gt = buffer.view_attribute::<f64>(&attributes::GPS_TIME).at(i);
+            fields.push(Field::F64(vec![gt]));
+        }
+
+        if layout.has_attribute(&attributes::POINT_SOURCE_ID) {
+            let sid = buffer.view_attribute::<u16>(&attributes::POINT_SOURCE_ID).at(i);
+            fields.push(Field::U16(vec![sid]));
+        }
+
+        if layout.has_attribute(&attributes::USER_DATA) {
+            let ud = buffer.view_attribute::<u8>(&attributes::USER_DATA).at(i);
+            fields.push(Field::U8(vec![ud]));
+        }
+
+        if layout.has_attribute(&attributes::NUMBER_OF_RETURNS) {
+            let nor = buffer.view_attribute::<u8>(&attributes::NUMBER_OF_RETURNS).at(i);
+            fields.push(Field::U8(vec![nor]));
+        }
+
+        if layout.has_attribute(&attributes::RETURN_NUMBER) {
+            let rn = buffer.view_attribute::<u8>(&attributes::RETURN_NUMBER).at(i);
+            fields.push(Field::U8(vec![rn]));
+        }
+        
+        writer.push(&DynRecord(fields)).context("Failed to push point to PCD writer")?;
+    }
+    
+    writer.finish().context("Failed to finish PCD writer")?;
+    Ok(())
 }

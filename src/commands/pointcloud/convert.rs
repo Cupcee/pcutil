@@ -20,12 +20,20 @@ pub fn execute(args: PointcloudConvertArgs) -> Result<()> {
 
     let buffer = read_pointcloud_file_to_buffer(&args.input, args.factor, args.dynamic_fields)?;
 
-    // Currently only supports writing LAS/LAZ output
+    // Supports writing LAS/LAZ, PLY or PCD output
     if output_ext == "las" || output_ext == "laz" {
         write_all(&buffer, &args.output).context("Failure while writing las/laz.")?;
         println!("Converted '{}' to '{}'", args.input, args.output);
+    } else if output_ext == "ply" {
+        crate::commands::pointcloud::pointcloud_utils::write_ply_file(&buffer, &args.output)
+            .context("Failure while writing ply.")?;
+        println!("Converted '{}' to '{}'", args.input, args.output);
+    } else if output_ext == "pcd" {
+        crate::commands::pointcloud::pointcloud_utils::write_pcd_file(&buffer, &args.output)
+            .context("Failure while writing pcd.")?;
+        println!("Converted '{}' to '{}'", args.input, args.output);
     } else {
-        bail!("Currently only supports writing to LAS/LAZ output")
+        bail!("Currently only supports writing to LAS/LAZ, PLY or PCD output")
     }
 
     Ok(())
