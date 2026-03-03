@@ -90,11 +90,14 @@ pub struct PointcloudVisualizationArgs {
     /// Scales XYZ coordinates on load by this factor (factor x XYZ).
     #[clap(short, long, default_value_t = 1.0)]
     pub factor: f64,
-    /// Visualized point radius (in pointcloud units). Defaults to 0.05.
-    #[clap(short, long, default_value_t = 0.05)]
+    /// Visualized point radius (in pointcloud units). Defaults to 0.03 (at default voxel size 0.1).
+    /// If voxel size is changed, this radius is scaled linearly.
+    /// If provided on command line, this value is used as the base for scaling.
+    #[clap(short, long, default_value_t = 0.03)]
     pub radii: f32,
-    /// Downsapling voxel size, in data coordinate units. Defaults to 0.05.
-    #[clap(short, long, default_value_t = 0.05)]
+    /// Downsampling voxel size, in data coordinate units. Defaults to 0.1.
+    /// Radius of visualized points is scaled linearly according to this.
+    #[clap(short, long, default_value_t = 0.1)]
     pub voxel_size: f32,
     /// These should be passed in same order as the fields
     /// have in the input file, and we expect that first dynamic

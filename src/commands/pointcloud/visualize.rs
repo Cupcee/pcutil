@@ -124,9 +124,18 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
         let filtered_points: Vec<[f32; 3]> =
             indices_to_keep.iter().map(|&i| raw_points[i]).collect();
 
-        let mut rerun_points = Points3D::new(filtered_points.clone()).with_radii([args.radii]);
+        // 4. Calculate Radii based on scaling
+        // If voxel_size is 0, we don't scale.
+        // Otherwise, scaling is linear: radius = radii * (voxel_size / 0.1)
+        let actual_radii = if args.voxel_size > 0.0 {
+            args.radii * (args.voxel_size / 0.1)
+        } else {
+            args.radii
+        };
 
-        // 4. Attributes (Classification)
+        let mut rerun_points = Points3D::new(filtered_points.clone()).with_radii([actual_radii]);
+
+        // 5. Attributes (Classification)
         if buffer
             .point_layout()
             .has_attribute(&attributes::CLASSIFICATION)
@@ -145,7 +154,7 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
             rerun_points = rerun_points.with_class_ids(class_ids);
         }
 
-        // 5. Attributes (Source ID)
+        // 6. Attributes (Source ID)
         if buffer
             .point_layout()
             .has_attribute(&attributes::POINT_SOURCE_ID)

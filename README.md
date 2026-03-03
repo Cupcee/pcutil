@@ -170,6 +170,15 @@ Options:
 
           [default: 1]
 
+  -r, --radii <RADII>
+          Visualized point radius (in pointcloud units). Defaults to 0.03.
+          This value is scaled linearly by the voxel-size (referenced to default voxel size 0.1).
+          If provided on command line, this value is used as the base for scaling.
+
+  -v, --voxel-size <VOXEL_SIZE>
+          Downsampling voxel size, in data coordinate units. Defaults to 0.1.
+          Radius of visualized points is scaled linearly according to this.
+
   -d, --dynamic-fields [<DYNAMIC_FIELDS>...]
           These should be passed in same order as the fields have in the input file. For PCD files, standard fields (intensity, rgb, label, etc.) are automatically detected if this flag is omitted.
 
@@ -182,6 +191,9 @@ Options:
           - `return_number`: Return number field. (alias: rn)
           - `number_of_returns`: Total number of returns. (alias: nor)
           - `skip`: Skips reading the dynamic field at its position. (alias: s)
+
+  -l, --label-field <LABEL_FIELD>
+          Indicates which of the captured dynamic fields is used as the `class_ids` for the visualized pointcloud in Rerun. Defaults to `classification`.
 
   -h, --help
           Print help (see a summary with '-h')
