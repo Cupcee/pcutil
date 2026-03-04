@@ -9,6 +9,7 @@ use pasture_core::{
 };
 use pcd_rs::{DataKind, DynRecord, Field, Schema, ValueKind, WriterInit};
 use ply_rs::ply::{Addable, Property, PropertyType, ScalarType};
+use walkdir::WalkDir;
 
 use crate::shared::math::{hull_volume_area, sample_for_hull};
 use crate::DynFieldType;
@@ -926,4 +927,41 @@ pub fn write_pcd_file(buffer: &VectorBuffer, path: &str) -> Result<()> {
     
     writer.finish().context("Failed to finish PCD writer")?;
     Ok(())
+}
+
+/// Gather pointcloud paths (.las/.laz/.pcd/.ply).
+pub fn gather_pointcloud_paths(input: &str, recursive: bool) -> Result<Vec<String>> {
+    let mut paths = Vec::new();
+    let input_path = Path::new(input);
+
+    if input_path.is_file() {
+        let ext = extension(input);
+        if is_supported_extension(&ext) {
+            paths.push(input.to_string());
+        }
+    } else if input_path.is_dir() {
+        if recursive {
+            for entry in WalkDir::new(input_path).into_iter().filter_map(Result::ok) {
+                if entry.file_type().is_file() {
+                    let p = entry.path().to_string_lossy().to_string();
+                    if is_supported_extension(&extension(&p)) {
+                        paths.push(p);
+                    }
+                }
+            }
+        } else {
+            for entry in std::fs::read_dir(input_path)? {
+                let e = entry?;
+                let p = e.path();
+                if p.is_file() {
+                    let ps = p.to_string_lossy().to_string();
+                    if is_supported_extension(&extension(&ps)) {
+                        paths.push(ps);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(paths)
 }

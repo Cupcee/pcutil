@@ -4,11 +4,9 @@ use indicatif::ParallelProgressIterator;
 use itertools::Itertools;
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::path::Path;
-use walkdir::WalkDir;
-
 use crate::commands::pointcloud::pointcloud_utils::{
-    extension, is_supported_extension, read_pointcloud_file_to_buffer, PointcloudSummary,
+    extension, gather_pointcloud_paths, read_pointcloud_file_to_buffer,
+    PointcloudSummary,
 };
 use crate::shared::barplot::Barplot;
 use crate::shared::histogram::Histogram;
@@ -427,41 +425,4 @@ fn print_class_distribution(st: &Stats) {
     let class_map = st.classification_counts.clone();
     let plot = Barplot::new(class_map);
     println!("{}", plot);
-}
-
-/// Gather pointcloud paths (.las/.laz/.pcd).
-fn gather_pointcloud_paths(input: &str, recursive: bool) -> Result<Vec<String>> {
-    let mut paths = Vec::new();
-    let input_path = Path::new(input);
-
-    if input_path.is_file() {
-        let ext = extension(input);
-        if is_supported_extension(&ext) {
-            paths.push(input.to_string());
-        }
-    } else if input_path.is_dir() {
-        if recursive {
-            for entry in WalkDir::new(input_path).into_iter().filter_map(Result::ok) {
-                if entry.file_type().is_file() {
-                    let p = entry.path().to_string_lossy().to_string();
-                    if is_supported_extension(&extension(&p)) {
-                        paths.push(p);
-                    }
-                }
-            }
-        } else {
-            for entry in std::fs::read_dir(input_path)? {
-                let e = entry?;
-                let p = e.path();
-                if p.is_file() {
-                    let ps = p.to_string_lossy().to_string();
-                    if is_supported_extension(&extension(&ps)) {
-                        paths.push(ps);
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(paths)
 }

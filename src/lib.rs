@@ -130,6 +130,7 @@ pub struct PointcloudConvertArgs {
     #[arg(required = true)]
     pub input: String,
     /// Supported pointcloud formats: [PCD, LAS, LAZ, PLY]
+    /// If input is a directory, this should also be a directory.
     #[arg(required = true)]
     pub output: String,
 
@@ -155,6 +156,15 @@ pub struct PointcloudConvertArgs {
     /// unsupported by the tool.
     #[clap(short, long, value_enum, num_args = 0..)]
     pub dynamic_fields: Vec<DynFieldType>,
+
+    /// If provided, recursively process directories.
+    #[clap(short, long)]
+    pub recursive: bool,
+
+    /// Target format for directory conversion (e.g., "ply", "pcd", "las", "laz").
+    /// Required if input is a directory.
+    #[clap(short, long)]
+    pub format: Option<String>,
 }
 
 // Error handling utility that can be used by both lib and binary
