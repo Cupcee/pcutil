@@ -258,7 +258,7 @@ Merge multiple pointcloud files from a directory into a single composite
 supercloud. Optionally, an external `.npy` file can be provided containing
 transformation matrices (4x4) for each frame.
 
-You may obtain pose files the accepted format e.g. with the `KISS-ICP` LiDAR
+You may obtain pose files with the accepted format e.g. with the `KISS-ICP` LiDAR
 Odometry pipeline: [link](https://github.com/PRBonn/kiss-icp).
 
 ```sh
