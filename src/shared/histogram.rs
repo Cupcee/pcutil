@@ -61,6 +61,7 @@ impl Histogram {
 /// # Examples
 ///
 /// ```rust
+/// use pcutil::shared::histogram::mean;
 /// let data = vec![1u64, 2, 3, 4, 5];
 /// assert_eq!(mean(&data), Some(3.0));
 /// ```
@@ -81,6 +82,7 @@ pub fn mean(data: &[u64]) -> Option<f64> {
 /// # Examples
 ///
 /// ```rust
+/// use pcutil::shared::histogram::variance;
 /// let data = vec![1u64, 2, 3, 4, 5];
 /// let var = variance(&data).unwrap();
 /// // For population variance: ((1-3)^2 + (2-3)^2 + ... + (5-3)^2) / 5 = 2.0
@@ -110,6 +112,7 @@ pub fn variance(data: &[u64]) -> Option<f64> {
 /// # Examples
 ///
 /// ```rust
+/// use pcutil::shared::histogram::stddev;
 /// let data = vec![1u64, 2, 3, 4, 5];
 /// let sd = stddev(&data).unwrap();
 /// // Standard deviation of [1,2,3,4,5] (population) = sqrt(2) ≈ 1.4142

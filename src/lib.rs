@@ -167,6 +167,67 @@ pub struct PointcloudConvertArgs {
     pub format: Option<String>,
 }
 
+#[derive(Debug, Args)]
+pub struct PointcloudMergeArgs {
+    /// Directory containing pointcloud files.
+    #[arg(required = true)]
+    pub input: String,
+    /// Output pointcloud file.
+    #[arg(required = true)]
+    pub output: String,
+
+    /// Path to a .npy file containing an n_frames x 4 x 4 numpy array of transforms.
+    #[clap(short, long)]
+    pub poses: Option<String>,
+
+    /// Scales XYZ coordinates on load by this factor (factor x XYZ).
+    #[clap(short, long, default_value = "1.0")]
+    pub factor: f64,
+
+    /// Optional voxel size for downsampling the merged supercloud.
+    #[clap(short, long)]
+    pub voxel_size: Option<f64>,
+
+    /// Dynamic fields mapping, same as in other commands.
+    #[clap(short, long, value_enum, num_args = 0..)]
+    pub dynamic_fields: Vec<DynFieldType>,
+
+    /// If provided, recursively process directories.
+    #[clap(short, long)]
+    pub recursive: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct PointcloudVoxelizeArgs {
+    /// Input pointcloud file or directory.
+    #[arg(required = true)]
+    pub input: String,
+    /// Output pointcloud file or directory.
+    #[arg(required = true)]
+    pub output: String,
+
+    /// Voxel size for downsampling.
+    #[arg(required = true)]
+    pub voxel_size: f64,
+
+    /// Scales XYZ coordinates on load by this factor (factor x XYZ).
+    #[clap(short, long, default_value = "1.0")]
+    pub factor: f64,
+
+    /// Dynamic fields mapping, same as in other commands.
+    #[clap(short, long, value_enum, num_args = 0..)]
+    pub dynamic_fields: Vec<DynFieldType>,
+
+    /// If provided, recursively process directories.
+    #[clap(short, long)]
+    pub recursive: bool,
+
+    /// Target format for directory conversion (e.g., "ply", "pcd", "las", "laz").
+    /// Required if input is a directory.
+    #[clap(short, long)]
+    pub format: Option<String>,
+}
+
 // Error handling utility that can be used by both lib and binary
 pub fn handle_error(e: anyhow::Error) {
     eprintln!("Error!");

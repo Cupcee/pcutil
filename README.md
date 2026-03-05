@@ -67,7 +67,7 @@ if this data is available.
 
 ## Usage
 
-Currently tools are: `summary`, `visualize`, `convert`.
+Currently tools are: `summary`, `visualize`, `convert`, `merge`, `voxelize`.
 
 ### PCD Field Auto-detection
 
@@ -251,3 +251,107 @@ pcutil convert path/to/file.pcd path/to/file.ply
 # Convert PLY to PCD (standard attributes like intensity, rgb are preserved)
 pcutil convert path/to/file.ply path/to/file.pcd
 ```
+
+### Merge
+
+Merge multiple pointcloud files from a directory into a single composite
+supercloud. Optionally, an external `.npy` file can be provided containing
+transformation matrices (4x4) for each frame.
+
+You may obtain pose files the accepted format e.g. with the `KISS-ICP` LiDAR
+Odometry pipeline: [link](https://github.com/PRBonn/kiss-icp).
+
+```sh
+Merge multiple pointcloud files into one supercloud
+
+Usage: pcutil merge [OPTIONS] <INPUT> <OUTPUT>
+
+Arguments:
+  <INPUT>
+          Directory containing pointcloud files
+
+  <OUTPUT>
+          Output pointcloud file (supports .las, .laz, .pcd, .ply)
+
+Options:
+  -p, --poses <POSES>
+          Path to a .npy file containing an n_frames x 4 x 4 numpy array of transforms (f64).
+          Frames are assigned transforms in lexicographical order.
+
+  -f, --factor <FACTOR>
+          Scales XYZ coordinates on load by this factor (factor x XYZ)
+
+          [default: 1.0]
+
+  -v, --voxel-size <VOXEL_SIZE>
+          Optional voxel size for downsampling the merged supercloud.
+
+  -d, --dynamic-fields [<DYNAMIC_FIELDS>...]
+          Dynamic fields mapping, same as in other commands.
+
+  -r, --recursive
+          If provided, recursively process directories
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+Example:
+
+```sh
+# Merge all PCD files in a directory into one LAS file
+pcutil merge path/to/frames/ supercloud.las
+
+# Merge with transformation matrices and voxelize the output
+pcutil merge path/to/frames/ supercloud.pcd --poses poses.npy --voxel-size 0.05
+```
+
+### Voxelize
+
+Perform voxelization (downsampling) on one or more pointcloud files. This keeps only one point per voxel of the specified size, significantly reducing the dataset size while preserving the overall structure.
+
+```sh
+Voxelize (downsample) pointcloud file(s)
+
+Usage: pcutil voxelize [OPTIONS] <INPUT> <OUTPUT> <VOXEL_SIZE>
+
+Arguments:
+  <INPUT>
+          Input pointcloud file or directory
+
+  <OUTPUT>
+          Output pointcloud file or directory
+
+  <VOXEL_SIZE>
+          Voxel size for downsampling (in data coordinate units)
+
+Options:
+  -f, --factor <FACTOR>
+          Scales XYZ coordinates on load by this factor (factor x XYZ)
+
+          [default: 1.0]
+
+  -d, --dynamic-fields [<DYNAMIC_FIELDS>...]
+          Dynamic fields mapping, same as in other commands.
+
+  -r, --recursive
+          If provided, recursively process directories
+
+  -t, --format <FORMAT>
+          Target format for directory conversion (e.g., "ply", "pcd", "las", "laz").
+          Required if input is a directory.
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+Example:
+
+```sh
+# Voxelize a single file with a 10cm voxel size
+pcutil voxelize cloud.las voxelized.las 0.1
+
+# Voxelize an entire directory of files
+pcutil voxelize input_dir/ output_dir/ 0.05 --format pcd
+```
+
