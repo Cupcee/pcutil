@@ -2,6 +2,19 @@
 
 Various operations for transforming and exploring pointcloud data.
 
+## Table of Contents
+
+- [Caveats](#caveats)
+- [Prerequisites](#prerequisites)
+- [Installation](#installation)
+- [Usage](#usage)
+  - [PCD Field Auto-detection](#pcd-field-auto-detection)
+  - [Summary](#summary)
+  - [Visualize](#visualize)
+  - [Convert](#convert)
+  - [Merge](#merge)
+  - [Voxelize](#voxelize)
+
 ## Caveats
 
 This tool has been tested to work with MacOS and Ubuntu 24.04 LTS. Windows
