@@ -206,11 +206,32 @@ Options:
           - `number_of_returns`: Total number of returns. (alias: nor)
           - `skip`: Skips reading the dynamic field at its position. (alias: s)
 
-  -l, --label-field <LABEL_FIELD>
+  - -l, --label-field <LABEL_FIELD>
           Indicates which of the captured dynamic fields is used as the `class_ids` for the visualized pointcloud in Rerun. Defaults to `classification`.
 
-  -h, --help
+  - h, --help
           Print help (see a summary with '-h')
+
+Examples:
+
+```sh
+# PCD files auto-detect standard fields (intensity, rgb, label, etc.):
+pcutil visualize path/to/file.pcd
+
+# Use a larger voxel size for downsampling and adjust point radii:
+pcutil visualize path/to/file.laz --voxel-size 0.2 --radii 0.05
+
+# Visualize a directory of pointcloud files.
+# This automatically creates a timeline in Rerun (frame_idx), allowing
+# you to scrub through the frames.
+pcutil visualize path/to/frames/
+
+# Use the 'source_id' field for coloring/labeling instead of classification:
+pcutil visualize path/to/file.pcd --label-field source_id
+
+# If you have non-standard fields, use -d to map them:
+# E.g. x,y,z followed by two unknown fields and then classification:
+pcutil visualize path/to/file.pcd -d skip skip class
 ```
 
 ### Convert
