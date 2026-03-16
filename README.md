@@ -14,6 +14,7 @@ Various operations for transforming and exploring pointcloud data.
   - [Convert](#convert)
   - [Merge](#merge)
   - [Voxelize](#voxelize)
+  - [Crop](#crop)
 
 ## Caveats
 
@@ -80,7 +81,7 @@ if this data is available.
 
 ## Usage
 
-Currently tools are: `summary`, `visualize`, `convert`, `merge`, `voxelize`.
+Currently tools are: `summary`, `visualize`, `convert`, `merge`, `voxelize`, `crop`.
 
 ### PCD Field Auto-detection
 
@@ -366,5 +367,69 @@ pcutil voxelize cloud.las voxelized.las 0.1
 
 # Voxelize an entire directory of files
 pcutil voxelize input_dir/ output_dir/ 0.05 --format pcd
+```
+
+### Crop
+
+Crop pointcloud file(s) to a specified Axis-Aligned Bounding Box (AABB).
+
+```sh
+Crop pointcloud to specified AABB bounds
+
+Usage: pcutil crop [OPTIONS] <INPUT> <OUTPUT> <XMIN> <YMIN> <ZMIN> <XMAX> <YMAX> <ZMAX>
+
+Arguments:
+  <INPUT>
+          Input pointcloud file or directory
+
+  <OUTPUT>
+          Output pointcloud file or directory
+
+  <XMIN>
+          Minimum X bound
+
+  <YMIN>
+          Minimum Y bound
+
+  <ZMIN>
+          Minimum Z bound
+
+  <XMAX>
+          Maximum X bound
+
+  <YMAX>
+          Maximum Y bound
+
+  <ZMAX>
+          Maximum Z bound
+
+Options:
+  -f, --factor <FACTOR>
+          Scales XYZ coordinates on load by this factor (factor x XYZ)
+
+          [default: 1.0]
+
+  -d, --dynamic-fields [<DYNAMIC_FIELDS>...]
+          Dynamic fields mapping, same as in other commands.
+
+  -r, --recursive
+          If provided, recursively process directories
+
+  -t, --format <FORMAT>
+          Target format for directory conversion (e.g., "ply", "pcd", "las", "laz").
+          Required if input is a directory.
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+Example:
+
+```sh
+# Crop a single file to bounds [0, 0, 0] to [10, 10, 10]
+pcutil crop cloud.las cropped.las 0 0 0 10 10 10
+
+# Crop an entire directory of files
+pcutil crop input_dir/ output_dir/ -10 -10 0 10 10 5 --format pcd
 ```
 

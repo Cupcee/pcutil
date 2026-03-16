@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use pcutil::{
-    PointcloudConvertArgs, PointcloudMergeArgs, PointcloudSummaryArgs, PointcloudVisualizationArgs,
-    PointcloudVoxelizeArgs,
+    PointcloudConvertArgs, PointcloudCropArgs, PointcloudMergeArgs, PointcloudSummaryArgs,
+    PointcloudVisualizationArgs, PointcloudVoxelizeArgs,
 };
 
 /// Rust implementation of bash commands
@@ -24,6 +24,8 @@ enum PointcloudCommand {
     Merge(PointcloudMergeArgs),
     /// Voxelize (downsample) pointcloud file(s).
     Voxelize(PointcloudVoxelizeArgs),
+    /// Crop pointcloud to specified AABB bounds.
+    Crop(PointcloudCropArgs),
 }
 
 fn main() {
@@ -37,6 +39,7 @@ fn main() {
         }
         PointcloudCommand::Merge(args) => pcutil::commands::pointcloud::merge::execute(args),
         PointcloudCommand::Voxelize(args) => pcutil::commands::pointcloud::voxelize::execute(args),
+        PointcloudCommand::Crop(args) => pcutil::commands::pointcloud::crop::execute(args),
     };
 
     if let Err(e) = result {

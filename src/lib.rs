@@ -228,6 +228,37 @@ pub struct PointcloudVoxelizeArgs {
     pub format: Option<String>,
 }
 
+#[derive(Debug, Args)]
+pub struct PointcloudCropArgs {
+    /// Input pointcloud file or directory.
+    #[arg(required = true)]
+    pub input: String,
+    /// Output pointcloud file or directory.
+    #[arg(required = true)]
+    pub output: String,
+
+    /// AABB bounds: x_min y_min z_min x_max y_max z_max
+    #[arg(required = true, num_args = 6, value_names = ["XMIN", "YMIN", "ZMIN", "XMAX", "YMAX", "ZMAX"])]
+    pub bounds: Vec<f64>,
+
+    /// Scales XYZ coordinates on load by this factor (factor x XYZ).
+    #[clap(short, long, default_value = "1.0")]
+    pub factor: f64,
+
+    /// Dynamic fields mapping, same as in other commands.
+    #[clap(short, long, value_enum, num_args = 0..)]
+    pub dynamic_fields: Vec<DynFieldType>,
+
+    /// If provided, recursively process directories.
+    #[clap(short, long)]
+    pub recursive: bool,
+
+    /// Target format for directory conversion (e.g., "ply", "pcd", "las", "laz").
+    /// Required if input is a directory.
+    #[clap(short, long)]
+    pub format: Option<String>,
+}
+
 // Error handling utility that can be used by both lib and binary
 pub fn handle_error(e: anyhow::Error) {
     eprintln!("Error!");

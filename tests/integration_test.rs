@@ -4,9 +4,10 @@ use common::{create_mock_pcd, create_mock_poses};
 use pasture_core::containers::BorrowedBuffer;
 use pcutil::{
     commands::pointcloud::{
-        convert, merge, pointcloud_utils::read_pointcloud_file_to_buffer, summary, voxelize,
+        convert, crop, merge, pointcloud_utils::read_pointcloud_file_to_buffer, summary, voxelize,
     },
-    PointcloudConvertArgs, PointcloudMergeArgs, PointcloudSummaryArgs, PointcloudVoxelizeArgs,
+    PointcloudConvertArgs, PointcloudCropArgs, PointcloudMergeArgs, PointcloudSummaryArgs,
+    PointcloudVoxelizeArgs,
 };
 use tempfile::tempdir;
 
@@ -124,6 +125,35 @@ fn test_voxelize() {
     let result = voxelize::execute(args);
     assert!(result.is_ok());
     
+    let buffer = read_pointcloud_file_to_buffer(output_path_str, 1.0, vec![]).unwrap();
+    assert_eq!(buffer.len(), 1);
+}
+
+#[test]
+fn test_crop() {
+    let dir = tempdir().unwrap();
+    let input_path = dir.path().join("input.pcd");
+    let output_path = dir.path().join("output.pcd");
+    let input_path_str = input_path.to_str().unwrap();
+    let output_path_str = output_path.to_str().unwrap();
+
+    // One point inside [0, 1] cube, one outside
+    let points = [[0.5, 0.5, 0.5], [2.0, 2.0, 2.0]];
+    create_mock_pcd(input_path_str, &points, None).unwrap();
+
+    let args = PointcloudCropArgs {
+        input: input_path_str.to_string(),
+        output: output_path_str.to_string(),
+        bounds: vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+        factor: 1.0,
+        dynamic_fields: vec![],
+        recursive: false,
+        format: None,
+    };
+
+    let result = crop::execute(args);
+    assert!(result.is_ok());
+
     let buffer = read_pointcloud_file_to_buffer(output_path_str, 1.0, vec![]).unwrap();
     assert_eq!(buffer.len(), 1);
 }
