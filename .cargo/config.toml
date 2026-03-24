@@ -1,3 +1,0 @@
-[env]
-# Workaround for bindgen failing to find standard headers like float.h on some Linux systems.
-BINDGEN_EXTRA_CLANG_ARGS = "-I/usr/include"

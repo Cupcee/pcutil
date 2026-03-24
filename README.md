@@ -25,8 +25,28 @@ support is untested.
 
 - `rustc` (tested with version `1.90.0`)
 - `Cargo` (tested with version `1.90.0`)
+- `Clang` / `libclang-dev` (required for `qhull-sys` bindings)
 - Rerun-CLI (for `visualize`, see below for how to install this with Cargo)
 - (Optional: `cargo-binstall`, for installing Rerun)
+
+### Troubleshooting Installation
+
+If you encounter an error like `fatal error: 'float.h' file not found` during the build of `qhull-sys`, it usually means that `Clang` is missing or not properly configured on your system.
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install libclang-dev clang
+```
+
+**Fedora:**
+```bash
+sudo dnf install clang-devel clang
+```
+
+**macOS:**
+```bash
+xcode-select --install
+```
 
 ## Installation
 
