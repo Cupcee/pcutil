@@ -20,7 +20,7 @@ bytemuck = "1.20.0"
 itertools = "0.13.0"
 indicatif = { version = "0.17.11", features = ["rayon"] }
 rand = { version = "0.9.1", features = ["small_rng"] }
-qhull = "0.3.0"
+qhull = "0.4.0"
 termimad = "0.31.3"
 colored = "3.0.0"
 rerun = "0.24.1"

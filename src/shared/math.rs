@@ -167,13 +167,13 @@ pub fn hull_volume_area(points: Vec<[f64; 3]>) -> (f64, f64) {
     let mut volume = 0.0_f64;
     let mut area = 0.0_f64;
 
-    for facet in qh.faces() {
+    for facet in qh.facets() {
         let verts = facet.vertices().expect("facet has no vertices");
         // Collect coordinates once
         let coords: Vec<Vector3<f64>> = verts
             .iter()
             .map(|v| {
-                let p = v.point();
+                let p = v.point().expect("vertex has no point data");
                 Vector3::new(p[0], p[1], p[2])
             })
             .collect();
