@@ -5605,9 +5605,9 @@ checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
 
 [[package]]
 name = "pcd-rs"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0c4d5b0e9ec249a51682e697d95293d2b9d766b600aa56f54e559b73b7523182"
+checksum = "d4ed911416cc7a2548600b6bd3a9c5b6413a779e37fe564c541d2f586fccf9a5"
 dependencies = [
  "byteorder",
  "itertools 0.13.0",
@@ -5619,9 +5619,9 @@ dependencies = [
 
 [[package]]
 name = "pcd-rs-derive"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32f5041014e2db20e2147f7185bbd517afdb7f37f2a74db02dd3ab92a31d47db"
+checksum = "1399f4acc19efd72ddcae2856e9028e956a264ab5cad366d6aadefebb7dfb6a4"
 dependencies = [
  "itertools 0.13.0",
  "once_cell",

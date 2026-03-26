@@ -864,6 +864,7 @@ pub fn write_pcd_file(buffer: &VectorBuffer, path: &str) -> Result<()> {
         viewpoint: Default::default(),
         data_kind: DataKind::Binary,
         schema: Some(Schema::from_iter(schema_fields)),
+        version: Some(String::from("0.7")),
     };
     
     let mut writer = writer_init.create(path).context("Failed to create PCD writer")?;
