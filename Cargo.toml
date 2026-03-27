@@ -15,7 +15,7 @@ rayon = "1.10.0"
 walkdir = "2.4.0"
 pasture-io = "0.5.0"
 pasture-core = "0.5.0"
-pcd-rs = { version = "0.12.0", features = ["derive"] }
+pcd-rs = { version = "0.13.0", features = ["derive"] }
 bytemuck = "1.20.0"
 itertools = "0.13.0"
 indicatif = { version = "0.17.11", features = ["rayon"] }
