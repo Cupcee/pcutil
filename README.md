@@ -4,7 +4,6 @@ Various operations for transforming and exploring pointcloud data.
 
 ## Table of Contents
 
-- [Caveats](#caveats)
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
 - [Usage](#usage)
@@ -16,12 +15,11 @@ Various operations for transforming and exploring pointcloud data.
   - [Voxelize](#voxelize)
   - [Crop](#crop)
 
-## Caveats
-
-This tool has been tested to work with MacOS and Ubuntu 24.04 LTS. Windows
-support is untested.
-
 ## Prerequisites
+
+This tool has been tested to work with MacOS Tahoe 26, Ubuntu 24.04 LTS and
+Windows 11. However, the install instructions for Windows may be missing certain
+steps.
 
 - `rustc` (tested with version `1.90.0`)
 - `Cargo` (tested with version `1.90.0`)
@@ -31,19 +29,24 @@ support is untested.
 
 ### Troubleshooting Installation
 
-If you encounter an error like `fatal error: 'float.h' file not found` during the build of `qhull-sys`, it usually means that `Clang` is missing or not properly configured on your system.
+If you encounter an error like `fatal error: 'float.h' file not found` during
+the build of `qhull-sys`, it usually means that `Clang` is missing or not
+properly configured on your system.
 
 **Ubuntu/Debian:**
+
 ```bash
 sudo apt-get install libclang-dev clang
 ```
 
 **Fedora:**
+
 ```bash
 sudo dnf install clang-devel clang
 ```
 
 **macOS:**
+
 ```bash
 xcode-select --install
 ```
@@ -63,7 +66,7 @@ To use `visualize`, install also the Rerun-cli. Either install
 
 First, install `cargo-binstall` if it is missing:
 
-```sh
+```bash
 # linux / macOS:
 curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
 # windows:
@@ -72,7 +75,7 @@ Set-ExecutionPolicy Unrestricted -Scope Process; iex (iwr "https://raw.githubuse
 
 Then install `rerun-cli`:
 
-```sh
+```bash
 cargo binstall --force rerun-cli@0.24.1
 ```
 
@@ -127,7 +130,7 @@ If a field name is not recognized, it is automatically skipped. You can still us
 Summary gives aggregated information from a single or a directory of pointcloud
 files. Useful e.g. for summarizing pointcloud datasets.
 
-```sh
+```bash
 Summarize files in a given path
 
 Usage: pcutil summary [OPTIONS] <INPUT>...
@@ -164,7 +167,7 @@ Options:
 
 Examples:
 
-```sh
+```bash
 # PCD files auto-detect standard fields, so usually you don't need -d:
 pcutil summary path/to/file.pcd
 
@@ -189,7 +192,7 @@ pcutil summary -r path/to/root/ -d class
 Visualize visualizes the input pointcloud file through the Rerun-cli
 (make sure it's installed).
 
-```sh
+```bash
 Visualize point cloud using Rerun
 
 Usage: pcutil visualize [OPTIONS] <INPUT>
@@ -235,7 +238,7 @@ Options:
 
 Examples:
 
-```sh
+```bash
 # PCD files auto-detect standard fields (intensity, rgb, label, etc.):
 pcutil visualize path/to/file.pcd
 
@@ -259,7 +262,7 @@ pcutil visualize path/to/file.pcd -d skip skip class
 
 Convert pointcloud from one format to another. Supported formats include `pcd`, `las`, `laz`, and `ply`.
 
-```sh
+```bash
 Convert pointcloud file from one format to another
 
 Usage: pcutil convert [OPTIONS] <INPUT> <OUTPUT>
@@ -296,7 +299,7 @@ Options:
 
 Examples:
 
-```sh
+```bash
 # assuming file.pcd has headers x, y, z, class_idx_field
 # Standard fields like classification are auto-detected from PCD.
 pcutil convert path/to/file.pcd path/to/file.laz
@@ -354,7 +357,7 @@ Options:
 
 Example:
 
-```sh
+```bash
 # Merge all PCD files in a directory into one LAS file
 pcutil merge path/to/frames/ supercloud.las
 
@@ -366,7 +369,7 @@ pcutil merge path/to/frames/ supercloud.pcd --poses poses.npy --voxel-size 0.05
 
 Perform voxelization (downsampling) on one or more pointcloud files. This keeps only one point per voxel of the specified size, significantly reducing the dataset size while preserving the overall structure.
 
-```sh
+```bash
 Voxelize (downsample) pointcloud file(s)
 
 Usage: pcutil voxelize [OPTIONS] <INPUT> <OUTPUT> <VOXEL_SIZE>
@@ -403,7 +406,7 @@ Options:
 
 Example:
 
-```sh
+```bash
 # Voxelize a single file with a 10cm voxel size
 pcutil voxelize cloud.las voxelized.las 0.1
 
@@ -415,7 +418,7 @@ pcutil voxelize input_dir/ output_dir/ 0.05 --format pcd
 
 Crop pointcloud file(s) to a specified Axis-Aligned Bounding Box (AABB).
 
-```sh
+```bash
 Crop pointcloud to specified AABB bounds
 
 Usage: pcutil crop [OPTIONS] <INPUT> <OUTPUT> <XMIN> <YMIN> <ZMIN> <XMAX> <YMAX> <ZMAX>
@@ -467,7 +470,7 @@ Options:
 
 Example:
 
-```sh
+```bash
 # Crop a single file to bounds [0, 0, 0] to [10, 10, 10]
 pcutil crop cloud.las cropped.las 0 0 0 10 10 10
 
