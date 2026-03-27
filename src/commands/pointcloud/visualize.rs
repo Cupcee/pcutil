@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use dirs;
+use indicatif::ProgressBar;
 use pasture_core::containers::{BorrowedBuffer, BorrowedBufferExt};
 use pasture_core::layout::attributes;
 use pasture_core::nalgebra::Vector3;
@@ -9,11 +10,11 @@ use rerun::{
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
-use std::path::Path;
 
 use crate::commands::pointcloud::pointcloud_utils::{
-    extension, is_supported_extension, read_pointcloud_file_to_buffer,
+    gather_pointcloud_paths, read_pointcloud_file_to_buffer,
 };
+use crate::shared::progressbar::get_progress_bar;
 use crate::{LabelField, PointcloudVisualizationArgs};
 
 #[derive(Debug, Deserialize)]
@@ -80,11 +81,23 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
 
     rec.log_static("/", &load_annotation_context(&args.label_field))?;
 
-    let mut paths = gather_pointcloud_paths(&args.input)?;
+    let mut paths = gather_pointcloud_paths(&args.input, false)?;
     paths.sort();
+
+    let pb = if paths.len() > 1 {
+        let pb = ProgressBar::new(paths.len() as u64);
+        pb.set_style(get_progress_bar("Visualizing pointclouds"));
+        Some(pb)
+    } else {
+        None
+    };
 
     // Loop with index to establish a timeline
     for (frame_idx, path) in paths.iter().enumerate() {
+        if let Some(ref pb) = pb {
+            pb.set_message(path.clone());
+        }
+
         // 1. Set the time sequence
         // This links all data in this loop iteration to a specific frame on the timeline.
         rec.set_time_sequence("frame_idx", frame_idx as i64);
@@ -206,33 +219,15 @@ pub fn execute(args: PointcloudVisualizationArgs) -> Result<()> {
                     .with_labels([file_name]), // The text label
             )?;
         }
+
+        if let Some(ref pb) = pb {
+            pb.inc(1);
+        }
+    }
+
+    if let Some(pb) = pb {
+        pb.finish_with_message("Visualization sequence complete");
     }
 
     Ok(())
-}
-
-/// Gather pointcloud paths (.las/.laz/.pcd).
-fn gather_pointcloud_paths(input: &str) -> Result<Vec<String>> {
-    let mut paths = Vec::new();
-    let input_path = Path::new(input);
-
-    if input_path.is_file() {
-        let ext = extension(input);
-        if is_supported_extension(&ext) {
-            paths.push(input.to_string());
-        }
-    } else if input_path.is_dir() {
-        for entry in std::fs::read_dir(input_path)? {
-            let e = entry?;
-            let p = e.path();
-            if p.is_file() {
-                let ps = p.to_string_lossy().to_string();
-                if is_supported_extension(&extension(&ps)) {
-                    paths.push(ps);
-                }
-            }
-        }
-    }
-
-    Ok(paths)
 }
