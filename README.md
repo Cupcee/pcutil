@@ -21,8 +21,8 @@ This tool has been tested to work with MacOS Tahoe 26, Ubuntu 24.04 LTS and
 Windows 11. However, the install instructions for Windows may be missing certain
 steps.
 
-- `rustc` (tested with version `1.90.0`)
-- `Cargo` (tested with version `1.90.0`)
+- `rustc >= 1.94.0`
+- `cargo >= 1.94.0`
 - `Clang` / `libclang-dev` (required for `qhull-sys` bindings)
 - Rerun-CLI (for `visualize`, see below for how to install this with Cargo)
 - (Optional: `cargo-binstall`, for installing Rerun)
